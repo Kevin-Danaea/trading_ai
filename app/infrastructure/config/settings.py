@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """
-Settings - Configuraciones del Proyecto
-=======================================
+Settings - Configuraciones de Infraestructura
+============================================
 
-Archivo de configuraciones centralizadas para el proyecto de Trading AI.
+Archivo de configuraciones centralizadas para la infraestructura del Trading AI.
 Maneja variables de entorno y configuraciones por defecto.
+
+Esta es la capa de infraestructura - maneja detalles técnicos externos.
 """
 
 import os
@@ -37,7 +39,7 @@ def _clean_env_value(env_value: str) -> str:
 
 class Settings:
     """
-    Clase de configuraciones centralizadas.
+    Clase de configuraciones centralizadas para infraestructura.
     
     Maneja todas las configuraciones del proyecto, incluyendo:
     - APIs de exchanges (Binance)

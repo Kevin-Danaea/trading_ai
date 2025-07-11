@@ -1,1 +1,0 @@
-# Paquete de configuraciones compartidas del proyecto Trading AI 
