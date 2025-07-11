@@ -56,6 +56,9 @@ class Settings:
     BINANCE_API_KEY: str = os.getenv('BINANCE_API_KEY', '')
     BINANCE_API_SECRET: str = os.getenv('BINANCE_API_SECRET', '')
     
+    # === GEMINI AI CONFIGURATION ===
+    GEMINI_API_KEY: str = os.getenv('GEMINI_API_KEY', '')
+    
     # === DATABASE CONFIGURATION ===
     DATABASE_URL: str = os.getenv('DATABASE_URL', '')
     

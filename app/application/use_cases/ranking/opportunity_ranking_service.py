@@ -18,7 +18,7 @@ from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime
 from dataclasses import asdict
 
-from app.domain.entities.trading_opportunity import TradingOpportunity, RankingResult
+from app.domain.entities.trading_opportunity import TradingOpportunity, RankingResult, StrategyResult
 from app.domain.entities.crypto_candidate import CryptoCandidate
 
 logger = logging.getLogger(__name__)
@@ -105,7 +105,7 @@ class OpportunityRankingService:
     def _create_trading_opportunities(self, 
                                     candidates: List[CryptoCandidate],
                                     optimization_results: Dict[str, Dict[str, Any]]) -> List[TradingOpportunity]:
-        """Convierte candidatos + resultados de optimización en TradingOpportunity."""
+        """Convierte candidatos + resultados de optimización en TradingOpportunity con múltiples estrategias."""
         opportunities = []
         
         for candidate in candidates:
@@ -117,53 +117,61 @@ class OpportunityRankingService:
             
             opt_result = optimization_results[symbol]
             
-            # Extraer la mejor estrategia del resultado de optimización
-            best_strategy = self._extract_best_strategy(opt_result)
+            # Extraer todas las estrategias del resultado de optimización
+            all_strategies = self._extract_all_strategies(opt_result)
             
-            if not best_strategy:
-                logger.warning(f"⚠️ Sin estrategia válida para {symbol}")
+            if not all_strategies:
+                logger.warning(f"⚠️ Sin estrategias válidas para {symbol}")
                 continue
             
             try:
+                # Crear StrategyResult para cada estrategia
+                strategy_results = {}
+                for strategy_data in all_strategies:
+                    strategy_name = strategy_data['strategy']
+                    metrics = strategy_data['metrics']
+                    
+                    strategy_result = StrategyResult(
+                        strategy_name=strategy_name,
+                        optimized_params=strategy_data['params'],
+                        
+                        # Métricas de rendimiento
+                        roi_percentage=float(metrics.get('Return [%]', 0.0)),
+                        sharpe_ratio=float(metrics.get('Sharpe Ratio', 0.0)),
+                        max_drawdown_percentage=abs(float(metrics.get('Max. Drawdown [%]', 100.0))),
+                        win_rate_percentage=float(metrics.get('Win Rate [%]', 0.0)),
+                        total_trades=int(metrics.get('# Trades', 0)),
+                        avg_trade_percentage=float(metrics.get('Avg. Trade [%]', 0.0)),
+                        volatility_percentage=float(metrics.get('Volatility [%]', 0.0)),
+                        calmar_ratio=float(metrics.get('Calmar Ratio', 0.0)),
+                        sortino_ratio=float(metrics.get('Sortino Ratio', 0.0)),
+                        exposure_time_percentage=float(metrics.get('Exposure Time [%]', 0.0)),
+                        
+                        # Información del proceso
+                        optimization_iterations=int(opt_result.get('total_iterations', 0) / 3),  # Dividido entre las 3 estrategias
+                        optimization_duration_seconds=float(opt_result.get('duration_seconds', 0) / 3),
+                        confidence_level=0.8  # Default
+                    )
+                    
+                    strategy_results[strategy_name] = strategy_result
+                
+                # Obtener estrategia recomendada
+                recommended_strategy = opt_result.get('recommended_strategy', 'grid')
+                
+                # Crear la oportunidad con todas las estrategias
                 opportunity = TradingOpportunity(
-                    # Candidato base
                     candidate=candidate,
-                    
-                    # Estrategia optimizada
-                    strategy_name=best_strategy['strategy'],
-                    optimized_params=best_strategy['params'],
-                    
-                    # Métricas de rendimiento
-                    roi_percentage=float(best_strategy.get('Return [%]', 0.0)),
-                    sharpe_ratio=float(best_strategy.get('Sharpe Ratio', 0.0)),
-                    max_drawdown_percentage=abs(float(best_strategy.get('Max. Drawdown [%]', 100.0))),
-                    win_rate_percentage=float(best_strategy.get('Win Rate [%]', 0.0)),
-                    total_trades=int(best_strategy.get('# Trades', 0)),
-                    avg_trade_percentage=float(best_strategy.get('Avg. Trade [%]', 0.0)),
-                    volatility_percentage=float(best_strategy.get('Volatility [%]', 0.0)),
-                    
-                    # Métricas adicionales
-                    calmar_ratio=float(best_strategy.get('Calmar Ratio', 0.0)),
-                    sortino_ratio=float(best_strategy.get('Sortino Ratio', 0.0)),
-                    exposure_time_percentage=float(best_strategy.get('Exposure Time [%]', 0.0)),
-                    
-                    # Información del proceso
-                    optimization_iterations=int(opt_result.get('total_iterations', 0)),
-                    optimization_duration_seconds=float(opt_result.get('duration_seconds', 0)),
-                    backtest_period_days=30,  # Placeholder
-                    
-                    # Scores (se calcularán después)
-                    final_score=0.0,
-                    risk_adjusted_score=0.0,
-                    confidence_level=0.8,  # Default
-                    
-                    # Metadatos
+                    strategy_results=strategy_results,
+                    recommended_strategy_name=recommended_strategy,
+                    backtest_period_days=30,
+                    final_score=0.0,  # Se calculará después
+                    risk_adjusted_score=0.0,  # Se calculará después
                     created_at=datetime.now(),
                     market_conditions=self._determine_market_conditions(candidate)
                 )
                 
                 opportunities.append(opportunity)
-                logger.debug(f"✅ Oportunidad creada para {symbol}")
+                logger.debug(f"✅ Oportunidad creada para {symbol} con {len(strategy_results)} estrategias")
                 
             except Exception as e:
                 logger.warning(f"⚠️ Error creando oportunidad para {symbol}: {e}")
@@ -171,27 +179,29 @@ class OpportunityRankingService:
         
         return opportunities
     
-    def _extract_best_strategy(self, opt_result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Extrae la mejor estrategia del resultado de optimización."""
+    def _extract_all_strategies(self, opt_result: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Extrae todas las estrategias del resultado de optimización."""
         try:
-            # El optimizador devuelve las mejores configuraciones
-            best_configs = opt_result.get('best_configurations', [])
+            # El optimizador ahora devuelve todas las estrategias
+            all_strategies = opt_result.get('all_strategies', [])
             
-            if not best_configs:
-                return None
+            if not all_strategies:
+                return []
             
-            # Tomar la mejor configuración (primera en la lista)
-            best_config = best_configs[0]
+            # Retornar todas las estrategias con el formato correcto
+            formatted_strategies = []
+            for strategy_config in all_strategies:
+                formatted_strategies.append({
+                    'strategy': strategy_config.get('strategy', 'unknown'),
+                    'params': strategy_config.get('params', {}),
+                    'metrics': strategy_config.get('metrics', {})
+                })
             
-            return {
-                'strategy': best_config.get('strategy', 'unknown'),
-                'params': best_config.get('params', {}),
-                **best_config.get('metrics', {})
-            }
+            return formatted_strategies
             
         except Exception as e:
-            logger.warning(f"Error extrayendo mejor estrategia: {e}")
-            return None
+            logger.warning(f"Error extrayendo estrategias: {e}")
+            return []
     
     def _calculate_final_scores(self, opportunities: List[TradingOpportunity]) -> List[TradingOpportunity]:
         """Calcula los scores finales usando algoritmo multi-criterio."""
@@ -210,13 +220,16 @@ class OpportunityRankingService:
                 # Calcular nivel de confianza
                 confidence_level = self._calculate_confidence_level(opp)
                 
-                # Crear nueva oportunidad con scores actualizados
-                updated_opp = TradingOpportunity(
-                    **{k: v for k, v in asdict(opp).items() if k not in ['final_score', 'risk_adjusted_score', 'confidence_level']},
-                    final_score=final_score,
-                    risk_adjusted_score=risk_adjusted_score,
-                    confidence_level=confidence_level
-                )
+                # Actualizar scores en la oportunidad existente
+                # No podemos crear una nueva instancia fácilmente, así que actualizamos los campos
+                opp.final_score = final_score
+                opp.risk_adjusted_score = risk_adjusted_score
+                
+                # Actualizar confidence_level en la estrategia recomendada
+                if opp.recommended_strategy_name in opp.strategy_results:
+                    opp.strategy_results[opp.recommended_strategy_name].confidence_level = confidence_level
+                
+                updated_opp = opp
                 
                 scored_opportunities.append(updated_opp)
                 

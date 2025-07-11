@@ -19,7 +19,8 @@ google-cloud-bigquery>=3.11.0,<4.0.0  # Cliente oficial de Google BigQuery
 
 # === DATABASE ===
 sqlalchemy>=2.0.0,<3.0.0          # ORM y conexiones a bases de datos
-psycopg2-binary>=2.9.0,<3.0.0     # Adaptador PostgreSQL para Python
+psycopg2-binary>=2.9.0
+google-genai>=1.0.0     # Google Gen AI Python SDK oficial
 
 # === OPTIMIZATION ===
 optuna>=3.4.0,<4.0.0              # Optimización bayesiana para hiperparámetros

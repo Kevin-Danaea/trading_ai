@@ -3,13 +3,14 @@ Trading Brain Service - Servicio Cerebro de Trading
 ==================================================
 
 El cerebro principal del sistema de trading que orquesta todo el flujo:
-Scanner → Optimizer → Ranking → Decisión
+Scanner → Optimizer → Ranking → Qualitative Analysis → Decisión
 
 Este servicio coordina:
 1. Scanner: Encuentra las mejores 10 monedas
 2. Optimizer: Optimiza estrategias para cada moneda
 3. Ranking: Selecciona las Top 3-5 oportunidades
-4. Decision: Prepara las decisiones finales de trading
+4. Qualitative Analysis: Análisis con Gemini AI para "sentido común"
+5. Decision: Prepara las decisiones finales de trading
 """
 
 import logging
@@ -20,6 +21,7 @@ from datetime import datetime, timedelta
 from app.application.use_cases.scanning.crypto_scanner_service import CryptoScannerService
 from app.application.use_cases.optimization.bayesian_optimizer_service import BayesianOptimizerService
 from app.application.use_cases.ranking.opportunity_ranking_service import OpportunityRankingService
+from app.application.use_cases.qualitative_analysis.qualitative_filter_service import QualitativeFilterService
 from app.domain.entities import CryptoCandidate, TradingOpportunity, RankingResult
 from app.infrastructure.providers.market_data_provider import MarketDataProvider
 from app.infrastructure.providers.sentiment_data_provider import SentimentDataProvider
@@ -35,7 +37,8 @@ class TradingBrainService:
     1. 🔍 Scanner: Top 150 → Mejores 10 candidatos
     2. 🧪 Optimizer: 10 candidatos → 10 estrategias optimizadas
     3. 🧠 Ranking: 10 estrategias → Top 3-5 oportunidades
-    4. 💡 Decision: Top 3-5 → Decisiones de trading listas
+    4. 🤖 Qualitative Analysis: Top 3-5 → Análisis Gemini AI
+    5. 💡 Decision: Análisis completo → Decisiones de trading listas
     """
     
     def __init__(self,
@@ -83,9 +86,12 @@ class TradingBrainService:
             risk_tolerance=risk_tolerance
         )
         
+        self.qualitative_filter = QualitativeFilterService()
+        
         logger.info("🧠 TradingBrainService inicializado:")
         logger.info(f"   🎯 Target: {self.target_opportunities} oportunidades")
         logger.info(f"   ⚖️ Riesgo: {self.risk_tolerance}")
+        logger.info(f"   🤖 Filtro cualitativo: Gemini AI activado")
     
     def analyze_market_and_decide(self) -> Dict[str, Any]:
         """
@@ -95,8 +101,11 @@ class TradingBrainService:
             Diccionario con:
             - top_opportunities: Lista de mejores oportunidades
             - ranking_result: Resultado completo del ranking
+            - qualitative_results: Resultados del análisis cualitativo con Gemini AI
+            - qualitative_summary: Resumen ejecutivo del análisis cualitativo
             - execution_summary: Resumen de la ejecución
             - timing_breakdown: Desglose de tiempos
+            - recommendations: Recomendaciones finales combinando análisis cuanti y cualitativo
         """
         logger.info("🚀 INICIANDO ANÁLISIS COMPLETO DEL MERCADO...")
         start_time = time.time()
@@ -149,7 +158,21 @@ class TradingBrainService:
             
             logger.info(f"✅ RANKING completado: {len(ranking_result.top_opportunities)} oportunidades seleccionadas")
             
-            # FASE 4: FINALIZATION - Preparar resultado final
+            # FASE 4: QUALITATIVE ANALYSIS - Análisis cualitativo con Gemini AI
+            execution_summary['phase'] = 'qualitative_analysis'
+            logger.info("🤖 FASE 4: QUALITATIVE ANALYSIS - Análisis cualitativo con Gemini AI...")
+            
+            phase_start = time.time()
+            qualitative_results = self.qualitative_filter.analyze_opportunities(ranking_result.top_opportunities)
+            timing['qualitative_analysis'] = time.time() - phase_start
+            
+            if not qualitative_results:
+                logger.warning("⚠️ No se obtuvieron resultados del análisis cualitativo")
+                qualitative_results = []
+            else:
+                logger.info(f"✅ QUALITATIVE ANALYSIS completado: {len(qualitative_results)} análisis realizados")
+            
+            # FASE 5: FINALIZATION - Preparar resultado final
             execution_summary['phase'] = 'finalization'
             total_time = time.time() - start_time
             timing['total'] = total_time
@@ -161,16 +184,22 @@ class TradingBrainService:
                 'candidates_found': len(candidates),
                 'strategies_optimized': len(optimization_results),
                 'opportunities_selected': len(ranking_result.top_opportunities),
+                'qualitative_analyses': len(qualitative_results),
                 'total_duration_seconds': total_time
             })
+            
+            # Generar resumen ejecutivo cualitativo
+            qualitative_summary = self.qualitative_filter.get_execution_summary(qualitative_results)
             
             # Crear resultado final
             result = {
                 'top_opportunities': ranking_result.top_opportunities,
                 'ranking_result': ranking_result,
+                'qualitative_results': qualitative_results,
+                'qualitative_summary': qualitative_summary,
                 'execution_summary': execution_summary,
                 'timing_breakdown': timing,
-                'recommendations': self._generate_recommendations(ranking_result)
+                'recommendations': self._generate_recommendations_with_qualitative(ranking_result, qualitative_results)
             }
             
             self._log_final_results(result)
@@ -190,6 +219,8 @@ class TradingBrainService:
             return {
                 'top_opportunities': [],
                 'ranking_result': None,
+                'qualitative_results': [],
+                'qualitative_summary': {'error': 'No se pudieron analizar oportunidades'},
                 'execution_summary': execution_summary,
                 'timing_breakdown': timing,
                 'recommendations': []
@@ -227,36 +258,41 @@ class TradingBrainService:
                             **strategy_result.study_stats
                         })
                 
-                # Crear resultado compatible con el formato esperado
+                # Crear resultado con TODAS las estrategias para enviar a Gemini
                 if best_results:
-                    # Ordenar por valor (score) y tomar la mejor
-                    best_results.sort(key=lambda x: x.get('value', 0), reverse=True)
-                    best_config = best_results[0]
-                    
-                    result = {
-                        'best_configurations': [{
-                            'strategy': best_config['strategy'],
-                            'params': best_config['params'],
+                    # Incluir todas las estrategias optimizadas
+                    all_configs = []
+                    for config in best_results:
+                        all_configs.append({
+                            'strategy': config['strategy'],
+                            'params': config['params'],
                             'metrics': {
-                                'Return [%]': best_config.get('roi', 0),
-                                'Sharpe Ratio': best_config.get('sharpe_ratio', 0),
-                                'Max. Drawdown [%]': best_config.get('max_drawdown', 0),
-                                'Win Rate [%]': best_config.get('win_rate', 0),
-                                '# Trades': best_config.get('total_trades', 0),
-                                'Calmar Ratio': best_config.get('calmar_ratio', 0),
+                                'Return [%]': config.get('roi', 0),
+                                'Sharpe Ratio': config.get('sharpe_ratio', 0),
+                                'Max. Drawdown [%]': config.get('max_drawdown', 0),
+                                'Win Rate [%]': config.get('win_rate', 0),
+                                '# Trades': config.get('total_trades', 0),
+                                'Calmar Ratio': config.get('calmar_ratio', 0),
                                 'Volatility [%]': 0,  # Placeholder
                                 'Avg. Trade [%]': 0,  # Placeholder
                                 'Sortino Ratio': 0,  # Placeholder
                                 'Exposure Time [%]': 0  # Placeholder
                             }
-                        }],
+                        })
+                    
+                    # Ordenar para identificar la mejor como recomendada
+                    all_configs.sort(key=lambda x: x['metrics'].get('Return [%]', 0), reverse=True)
+                    
+                    result = {
+                        'all_strategies': all_configs,  # Todas las estrategias
+                        'recommended_strategy': all_configs[0]['strategy'],  # La mejor
                         'total_iterations': sum(r.get('trials_total', 0) for r in best_results),
                         'duration_seconds': 180  # Aproximado
                     }
                 else:
                     result = None
                 
-                if result and 'best_configurations' in result:
+                if result and 'all_strategies' in result:
                     optimization_results[symbol] = result
                     logger.info(f"✅ {symbol} optimizado exitosamente")
                 else:
@@ -268,6 +304,82 @@ class TradingBrainService:
         
         logger.info(f"✅ Optimización completada: {len(optimization_results)}/{len(candidates)} éxitos")
         return optimization_results
+    
+    def _generate_recommendations_with_qualitative(self, ranking_result: RankingResult, qualitative_results: List) -> List[Dict[str, Any]]:
+        """
+        Genera recomendaciones finales combinando ranking cuantitativo y análisis cualitativo.
+        
+        Args:
+            ranking_result: Resultado del ranking cuantitativo
+            qualitative_results: Lista de resultados del análisis cualitativo
+            
+        Returns:
+            Lista de recomendaciones finales priorizadas
+        """
+        recommendations = []
+        
+        # Crear mapa de resultados cualitativos por símbolo
+        qualitative_map = {}
+        for result in qualitative_results:
+            symbol = result.opportunity.candidate.symbol
+            qualitative_map[symbol] = result
+        
+        # Generar recomendaciones combinando ambos análisis
+        for i, opportunity in enumerate(ranking_result.top_opportunities, 1):
+            symbol = opportunity.candidate.symbol
+            qualitative_result = qualitative_map.get(symbol)
+            
+            if qualitative_result:
+                # Recomendación con análisis cualitativo
+                recommendation = {
+                    'rank': i,
+                    'symbol': symbol,
+                    'strategy': opportunity.strategy_name,
+                    'quantitative_score': opportunity.final_score,
+                    'qualitative_recommendation': qualitative_result.analysis.recommendation,
+                    'qualitative_confidence': qualitative_result.analysis.confidence_level,
+                    'combined_confidence_score': qualitative_result.confidence_score,
+                    'execution_priority': qualitative_result.execution_priority,
+                    'strategic_recommendation': qualitative_result.strategic_recommendation,
+                    'risk_assessment': qualitative_result.risk_assessment,
+                    'roi_expected': opportunity.roi_percentage,
+                    'sharpe_ratio': opportunity.sharpe_ratio,
+                    'max_drawdown': opportunity.max_drawdown_percentage,
+                    'reasoning': qualitative_result.analysis.reasoning,
+                    'market_context': qualitative_result.analysis.market_context,
+                    'risk_factors': qualitative_result.analysis.risk_factors,
+                    'opportunity_factors': qualitative_result.analysis.opportunity_factors,
+                    'strategic_notes': qualitative_result.analysis.strategic_notes
+                }
+            else:
+                # Recomendación solo cuantitativa (fallback)
+                recommendation = {
+                    'rank': i,
+                    'symbol': symbol,
+                    'strategy': opportunity.strategy_name,
+                    'quantitative_score': opportunity.final_score,
+                    'qualitative_recommendation': 'hold',  # Conservador si no hay análisis
+                    'qualitative_confidence': 'medium',
+                    'combined_confidence_score': opportunity.final_score,
+                    'execution_priority': 3,  # Prioridad media
+                    'strategic_recommendation': f"⚠️ MONITOREAR: {symbol} - Análisis cualitativo pendiente",
+                    'risk_assessment': "🟡 RIESGO MODERADO",
+                    'roi_expected': opportunity.roi_percentage,
+                    'sharpe_ratio': opportunity.sharpe_ratio,
+                    'max_drawdown': opportunity.max_drawdown_percentage,
+                    'reasoning': 'Análisis cualitativo no disponible',
+                    'market_context': 'Pendiente de análisis cualitativo',
+                    'risk_factors': [],
+                    'opportunity_factors': [],
+                    'strategic_notes': 'Requiere análisis cualitativo adicional'
+                }
+            
+            recommendations.append(recommendation)
+        
+        # Ordenar por prioridad de ejecución y confianza combinada
+        recommendations.sort(key=lambda x: (x['execution_priority'], -x['combined_confidence_score']))
+        
+        return recommendations
     
     def _generate_recommendations(self, ranking_result: RankingResult) -> List[Dict[str, Any]]:
         """Genera recomendaciones basadas en los resultados del ranking."""
@@ -370,11 +482,21 @@ class TradingBrainService:
         logger.info(f"   📊 Scanning: {timing.get('scanning', 0):.1f}s")
         logger.info(f"   🧪 Optimization: {timing.get('optimization', 0):.1f}s") 
         logger.info(f"   🧠 Ranking: {timing.get('ranking', 0):.1f}s")
+        logger.info(f"   🤖 Qualitative Analysis: {timing.get('qualitative_analysis', 0):.1f}s")
         
         # Estadísticas
         logger.info(f"📈 Candidatos encontrados: {summary.get('candidates_found', 0)}")
         logger.info(f"🎯 Estrategias optimizadas: {summary.get('strategies_optimized', 0)}")
         logger.info(f"🏆 Oportunidades seleccionadas: {summary.get('opportunities_selected', 0)}")
+        logger.info(f"🤖 Análisis cualitativos: {summary.get('qualitative_analyses', 0)}")
+        
+        # Resumen cualitativo
+        qualitative_summary = result.get('qualitative_summary', {})
+        if qualitative_summary and not qualitative_summary.get('error'):
+            logger.info(f"   ✅ Recomendaciones BUY: {qualitative_summary.get('buy_count', 0)}")
+            logger.info(f"   ⚠️ Recomendaciones HOLD: {qualitative_summary.get('hold_count', 0)}")
+            logger.info(f"   ❌ Recomendaciones AVOID: {qualitative_summary.get('avoid_count', 0)}")
+            logger.info(f"   🚀 Listas para ejecución: {qualitative_summary.get('ready_for_execution', False)}")
         
         # Top oportunidades
         logger.info(f"\n🥇 TOP {len(opportunities)} OPORTUNIDADES FINALES:")
