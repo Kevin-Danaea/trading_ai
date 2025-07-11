@@ -8,9 +8,12 @@ Las entidades representan objetos de negocio con identidad.
 
 from .crypto_candidate import CryptoCandidate
 from .optimization_result import OptimizationResult
+from .trading_opportunity import TradingOpportunity, RankingResult
 
 # Exportar todas las entidades disponibles
 __all__ = [
     'CryptoCandidate',
-    'OptimizationResult'
+    'OptimizationResult',
+    'TradingOpportunity',
+    'RankingResult'
 ]

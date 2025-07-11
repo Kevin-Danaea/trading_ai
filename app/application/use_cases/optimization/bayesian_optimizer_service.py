@@ -7,6 +7,12 @@ El "Master Chef" del sistema que encuentra la receta perfecta para cada moneda.
 
 Usa optimización bayesiana con Optuna para encontrar los parámetros óptimos
 en solo 100-200 iteraciones inteligentes vs 1,500 tradicionales.
+
+## Arquitectura
+Este servicio NO instancia las estrategias directamente. En su lugar:
+- Usa BacktestingService como capa de abstracción
+- BacktestingService se encarga de instanciar las clases de estrategia
+- Esto mantiene la separación de responsabilidades y facilita el testing
 """
 
 from typing import Dict, List, Any, Optional, Callable
@@ -20,7 +26,10 @@ import logging
 import time
 
 from app.domain.entities import OptimizationResult
-from app.domain.strategies import GridTradingStrategy, DCAStrategy, BTDStrategy
+
+# Nota: Las estrategias se usan a través del BacktestingService como capa de abstracción
+# No necesitamos importar las clases de estrategia directamente aquí
+# ya que el BacktestingService se encarga de instanciarlas y ejecutarlas
 
 logger = logging.getLogger(__name__)
 
