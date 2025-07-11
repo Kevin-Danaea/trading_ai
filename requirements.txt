@@ -17,6 +17,15 @@ python-dotenv>=1.0.0,<2.0.0       # Carga de variables de entorno desde .env
 pandas-gbq>=0.19.0,<1.0.0         # Integración pandas con Google BigQuery
 google-cloud-bigquery>=3.11.0,<4.0.0  # Cliente oficial de Google BigQuery
 
+# === DATABASE ===
+sqlalchemy>=2.0.0,<3.0.0          # ORM y conexiones a bases de datos
+
+# === OPTIMIZATION ===
+optuna>=3.4.0,<4.0.0              # Optimización bayesiana para hiperparámetros
+
+# === BACKTESTING ===
+backtesting>=0.3.3                # Librería profesional de backtesting
+
 # === VISUALIZATION & ANALYSIS ===
 matplotlib>=3.7.0,<4.0.0          # Gráficos y visualizaciones
 seaborn>=0.12.0,<1.0.0             # Visualizaciones estadísticas avanzadas

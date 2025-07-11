@@ -926,16 +926,27 @@ def ejecutar_optimizacion_btd_short(df_maestro: pd.DataFrame) -> List[Dict[str, 
 # FUNCIÓN PRINCIPAL
 # ============================================================================
 
-def main() -> None:
+def main(monedas_objetivo: Optional[List[str]] = None) -> None:
     """
     Función principal que orquesta todo el proceso de optimización masiva.
     Itera sobre múltiples monedas y estrategias, guardando resultados en BigQuery.
+    
+    Args:
+        monedas_objetivo: Lista opcional de monedas específicas a analizar.
+                         Si no se proporciona, usa UNIVERSO_MONEDAS completo.
     """
+    # Determinar las monedas a analizar
+    monedas_a_analizar = monedas_objetivo if monedas_objetivo else UNIVERSO_MONEDAS
+    
     logger.info("🎯 INICIANDO PROCESO DE OPTIMIZACIÓN MASIVA DE ESTRATEGIAS")
     logger.info("=" * 80)
     
     # Mostrar configuración inicial
-    logger.info(f"📊 Universo de monedas: {len(UNIVERSO_MONEDAS)} pares")
+    logger.info(f"📊 Monedas a analizar: {len(monedas_a_analizar)} pares")
+    if monedas_objetivo:
+        logger.info(f"   Monedas específicas: {monedas_objetivo}")
+    else:
+        logger.info(f"   Usando universo completo: {len(UNIVERSO_MONEDAS)} monedas")
     logger.info(f"🎯 Estrategias: GRID, Buy The Dip y BTD Short")
     logger.info(f"📈 Combinaciones GRID: {calcular_combinaciones_totales_grid()}")
     logger.info(f"📉 Combinaciones Buy The Dip: {calcular_combinaciones_totales_dca()}")
@@ -962,9 +973,9 @@ def main() -> None:
             logger.warning("⚠️ No se encontraron datos de sentimiento para el período")
             sentiment_data_global = None
         
-        # Iterar sobre cada moneda del universo
-        for i, pair in enumerate(UNIVERSO_MONEDAS, 1):
-            logger.info(f"\n🚀 [{i}/{len(UNIVERSO_MONEDAS)}] Procesando {pair}...")
+        # Iterar sobre cada moneda a analizar
+        for i, pair in enumerate(monedas_a_analizar, 1):
+            logger.info(f"\n🚀 [{i}/{len(monedas_a_analizar)}] Procesando {pair}...")
             
             # Pasar los sentimientos compartidos a cada par
             resultado_moneda = ejecutar_backtesting_para_moneda(pair, sentiment_data_global)
@@ -980,7 +991,7 @@ def main() -> None:
                 logger.error(f"❌ {pair} falló: {resultado_moneda.get('error', 'Error desconocido')}")
             
             # Pequeña pausa entre monedas para evitar rate limits
-            if i < len(UNIVERSO_MONEDAS):
+            if i < len(monedas_a_analizar):
                 logger.info(f"⏳ Pasando a siguiente moneda en 2 segundos...")
                 time.sleep(2)
         
@@ -993,7 +1004,7 @@ def main() -> None:
         logger.info("🎉 PROCESO MASIVO COMPLETADO")
         logger.info("=" * 80)
         logger.info(f"⏱️  Tiempo total: {tiempo_total/60:.1f} minutos")
-        logger.info(f"✅ Monedas procesadas exitosamente: {len(exitosos)}/{len(UNIVERSO_MONEDAS)}")
+        logger.info(f"✅ Monedas procesadas exitosamente: {len(exitosos)}/{len(monedas_a_analizar)}")
         logger.info(f"❌ Monedas con errores: {len(fallidos)}")
         
         if exitosos:
@@ -1015,4 +1026,27 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main() 
+    import argparse
+    
+    parser = argparse.ArgumentParser(description='Ejecuta backtesting masivo con configuración dinámica de monedas')
+    parser.add_argument(
+        '--monedas', 
+        nargs='*', 
+        help='Lista de monedas específicas para analizar (ej: --monedas BTC/USDT ETH/USDT SOL/USDT)'
+    )
+    parser.add_argument(
+        '--top', 
+        type=int, 
+        help='Usar las primeras N monedas del universo (ej: --top 5)'
+    )
+    
+    args = parser.parse_args()
+    
+    # Determinar monedas objetivo
+    monedas_objetivo = None
+    if args.monedas:
+        monedas_objetivo = args.monedas
+    elif args.top:
+        monedas_objetivo = UNIVERSO_MONEDAS[:args.top]
+    
+    main(monedas_objetivo) 
