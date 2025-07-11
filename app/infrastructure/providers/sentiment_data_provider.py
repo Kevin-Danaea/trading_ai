@@ -51,7 +51,7 @@ class SentimentDataProvider:
         logger.info(f"📰 Obteniendo datos de sentimiento de los últimos {days_back} días...")
         
         # Verificar cache
-        if self._is_cache_valid():
+        if self._is_cache_valid() and self.sentiment_cache is not None:
             logger.info("✅ Usando cache de sentimiento")
             return self.sentiment_cache
         
@@ -138,11 +138,13 @@ class SentimentDataProvider:
             
             # Aplicar bonus/penalización por emoción primaria (opcional)
             if 'primary_emotion' in recent_sentiment.columns:
-                emotion_bonus = self._calculate_emotion_bonus(recent_sentiment['primary_emotion'])
+                emotion_series = pd.Series(recent_sentiment['primary_emotion'])
+                emotion_bonus = self._calculate_emotion_bonus(emotion_series)
                 normalized_scores = normalized_scores + emotion_bonus
             
             # Media ponderada por recencia (más peso a noticias recientes)
-            weights = self._calculate_recency_weights(recent_sentiment['published_at'])
+            date_series = pd.Series(recent_sentiment['published_at'])
+            weights = self._calculate_recency_weights(date_series)
             weighted_score = (normalized_scores * weights).sum() / weights.sum()
             
             # Aplicar factor de volumen (más noticias = más confianza en el score)
@@ -220,14 +222,16 @@ class SentimentDataProvider:
             
             df = read_gbq(query, project_id=self.project_id)
             
-            if df.empty:
+            if df is None or df.empty:
                 logger.info("📰 No se encontraron datos de sentimiento en BigQuery")
                 return pd.DataFrame()
             
-            # Limpiar y preparar datos
+            # Limpiar y preparar datos (verificación de tipo para linter)
+            assert df is not None
             df['published_at'] = pd.to_datetime(df['published_at'])
             df['sentiment_score'] = pd.to_numeric(df['sentiment_score'], errors='coerce')
-            df = df.dropna(subset=['sentiment_score'])
+            subset_cols = ['sentiment_score']
+            df = df.dropna(subset=subset_cols) # type: ignore
             
             return df
             
@@ -338,10 +342,10 @@ class SentimentDataProvider:
     
     def _create_empty_sentiment_dataframe(self) -> pd.DataFrame:
         """Crea un DataFrame vacío con las columnas correctas."""
-        return pd.DataFrame(columns=[
-            'published_at', 'sentiment_score', 'primary_emotion', 
-            'news_category', 'source', 'headline'
-        ])
+        from typing import List
+        columns: List[str] = ['published_at', 'sentiment_score', 'primary_emotion', 
+                             'news_category', 'source', 'headline']
+        return pd.DataFrame(columns=pd.Index(columns))
     
     def _is_cache_valid(self) -> bool:
         """Verifica si el cache es válido (menos de 1 hora de antigüedad)."""

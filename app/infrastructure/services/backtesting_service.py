@@ -24,6 +24,46 @@ from app.domain.strategies import GridTradingStrategy, DCAStrategy, BTDStrategy
 logger = logging.getLogger(__name__)
 
 
+def safe_float(value: Any, default: float = 0.0) -> float:
+    """Convierte un valor a float de forma segura."""
+    if value is None:
+        return default
+    try:
+        if isinstance(value, (int, float)):
+            return float(value)
+        elif isinstance(value, str):
+            return float(value)
+        else:
+            return float(value)
+    except (ValueError, TypeError, AttributeError):
+        return default
+
+
+def safe_int(value: Any, default: int = 0) -> int:
+    """Convierte un valor a int de forma segura."""
+    if value is None:
+        return default
+    try:
+        if isinstance(value, (int, float)):
+            return int(value)
+        elif isinstance(value, str):
+            return int(float(value))
+        else:
+            return int(value)
+    except (ValueError, TypeError, AttributeError):
+        return default
+
+
+def safe_str(value: Any, default: str = '') -> str:
+    """Convierte un valor a string de forma segura."""
+    if value is None:
+        return default
+    try:
+        return str(value)
+    except (ValueError, TypeError, AttributeError):
+        return default
+
+
 def run_modern_backtest(df: pd.DataFrame, 
                        strategy_class: Type[Strategy],
                        strategy_params: Dict[str, Any],
@@ -100,32 +140,32 @@ def run_modern_backtest(df: pd.DataFrame,
         # Extraer métricas principales
         results = {
             # Métricas principales de rendimiento
-            'Return [%]': float(stats.get('Return [%]', 0.0)),
-            'Buy & Hold Return [%]': float(stats.get('Buy & Hold Return [%]', 0.0)),
-            'Max. Drawdown [%]': float(stats.get('Max. Drawdown [%]', 0.0)),
-            'Volatility [%]': float(stats.get('Volatility [%]', 0.0)),
+            'Return [%]': safe_float(stats.get('Return [%]')),
+            'Buy & Hold Return [%]': safe_float(stats.get('Buy & Hold Return [%]')),
+            'Max. Drawdown [%]': safe_float(stats.get('Max. Drawdown [%]')),
+            'Volatility [%]': safe_float(stats.get('Volatility [%]')),
             
             # Métricas de trading
-            '# Trades': int(stats.get('# Trades', 0)),
-            'Win Rate [%]': float(stats.get('Win Rate [%]', 0.0)),
-            'Best Trade [%]': float(stats.get('Best Trade [%]', 0.0)),
-            'Worst Trade [%]': float(stats.get('Worst Trade [%]', 0.0)),
-            'Avg. Trade [%]': float(stats.get('Avg. Trade [%]', 0.0)),
+            '# Trades': safe_int(stats.get('# Trades')),
+            'Win Rate [%]': safe_float(stats.get('Win Rate [%]')),
+            'Best Trade [%]': safe_float(stats.get('Best Trade [%]')),
+            'Worst Trade [%]': safe_float(stats.get('Worst Trade [%]')),
+            'Avg. Trade [%]': safe_float(stats.get('Avg. Trade [%]')),
             
             # Métricas de riesgo-retorno
-            'Sharpe Ratio': float(stats.get('Sharpe Ratio', 0.0)),
-            'Calmar Ratio': float(stats.get('Calmar Ratio', 0.0)),
-            'Sortino Ratio': float(stats.get('Sortino Ratio', 0.0)),
+            'Sharpe Ratio': safe_float(stats.get('Sharpe Ratio')),
+            'Calmar Ratio': safe_float(stats.get('Calmar Ratio')),
+            'Sortino Ratio': safe_float(stats.get('Sortino Ratio')),
             
             # Información adicional
-            'Start': str(stats.get('Start', '')),
-            'End': str(stats.get('End', '')),
-            'Duration': str(stats.get('Duration', '')),
-            'Exposure Time [%]': float(stats.get('Exposure Time [%]', 0.0)),
+            'Start': safe_str(stats.get('Start')),
+            'End': safe_str(stats.get('End')),
+            'Duration': safe_str(stats.get('Duration')),
+            'Exposure Time [%]': safe_float(stats.get('Exposure Time [%]')),
             
             # Valores absolutos
-            'Equity Final [$]': float(stats.get('Equity Final [$]', cash)),
-            'Return [USD]': float(stats.get('Equity Final [$]', cash)) - cash,
+            'Equity Final [$]': safe_float(stats.get('Equity Final [$]'), cash),
+            'Return [USD]': safe_float(stats.get('Equity Final [$]'), cash) - float(cash),
             
             # Configuración utilizada
             'strategy': strategy_class.__name__,
@@ -346,7 +386,7 @@ class BacktestingService:
         
         # Encontrar la mejor estrategia
         best_strategy = None
-        best_score = -float('inf')
+        best_score = -999999.0  # Usar valor muy bajo en lugar de infinito
         
         for strategy_name, result in results.items():
             if 'error' not in result:

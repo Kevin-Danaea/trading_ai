@@ -44,7 +44,7 @@ class MarketDataProvider:
         self.retry_delay = 5
         
         # Inicializar exchange
-        self.exchange = ccxt.binance(self.binance_config)
+        self.exchange = ccxt.binance(self.binance_config)  # type: ignore[arg-type]
         
         logger.info("📊 MarketDataProvider inicializado con Binance")
     
@@ -168,10 +168,8 @@ class MarketDataProvider:
                 return None
             
             # Convertir a DataFrame
-            df = pd.DataFrame(
-                klines,
-                columns=['timestamp', 'open', 'high', 'low', 'close', 'volume']
-            )
+            columns = ['timestamp', 'open', 'high', 'low', 'close', 'volume']
+            df = pd.DataFrame(klines, columns=pd.Index(columns))
             
             # Convertir timestamp a datetime
             df['datetime'] = pd.to_datetime(df['timestamp'], unit='ms')
@@ -230,6 +228,7 @@ class MarketDataProvider:
                 return None
             
             # Calcular indicadores técnicos
+            assert isinstance(df, pd.DataFrame)
             df = self._calculate_technical_indicators(df)
             
             # Agregar datos de sentimiento si están disponibles
@@ -266,17 +265,22 @@ class MarketDataProvider:
         Migrado desde scripts/data_collector.py
         """
         try:
+            # Type assertions para linter
+            close_series = pd.Series(df['close'])
+            high_series = pd.Series(df['high'])
+            low_series = pd.Series(df['low'])
+            
             # RSI
-            df['rsi'] = self._calculate_rsi(df['close'], period=14)
+            df['rsi'] = self._calculate_rsi(close_series, period=14)
             
             # Bollinger Bands
-            bb_upper, bb_middle, bb_lower = self._calculate_bollinger_bands(df['close'])
+            bb_upper, bb_middle, bb_lower = self._calculate_bollinger_bands(close_series)
             df['bb_upper'] = bb_upper
             df['bb_middle'] = bb_middle
             df['bb_lower'] = bb_lower
             
             # ADX
-            df['adx'] = self._calculate_adx(df['high'], df['low'], df['close'])
+            df['adx'] = self._calculate_adx(high_series, low_series, close_series)
             
             # Volatilidad (rolling 7 días)
             df['volatility'] = df['close'].pct_change().rolling(window=7).std()
@@ -296,7 +300,8 @@ class MarketDataProvider:
         gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
         rs = gain / loss
-        return 100 - (100 / (1 + rs))
+        rsi_result = 100 - (100 / (1 + rs))
+        return pd.Series(rsi_result, index=prices.index)
     
     def _calculate_bollinger_bands(self, prices: pd.Series, period: int = 20, 
                                  std_dev: float = 2) -> Tuple[pd.Series, pd.Series, pd.Series]:
@@ -305,7 +310,7 @@ class MarketDataProvider:
         rolling_std = prices.rolling(window=period).std()
         upper = rolling_mean + (rolling_std * std_dev)
         lower = rolling_mean - (rolling_std * std_dev)
-        return upper, rolling_mean, lower
+        return pd.Series(upper), pd.Series(rolling_mean), pd.Series(lower)
     
     def _calculate_adx(self, high: pd.Series, low: pd.Series, close: pd.Series, 
                       period: int = 14) -> pd.Series:
