@@ -63,7 +63,7 @@ class TelegramService:
             logger.error(f"❌ Error inicializando bot de Telegram: {e}")
             self.bot = None
     
-    async def send_message(self, message: str, parse_mode: ParseMode = ParseMode.MARKDOWN) -> bool:
+    async def send_message(self, message: str, parse_mode: ParseMode = ParseMode.MARKDOWN_V2) -> bool:
         """
         Envía un mensaje al canal de Telegram.
         
@@ -95,7 +95,7 @@ class TelegramService:
             logger.error(f"❌ Error enviando mensaje: {e}")
             return False
     
-    def send_message_sync(self, message: str, parse_mode: ParseMode = ParseMode.MARKDOWN) -> bool:
+    def send_message_sync(self, message: str, parse_mode: ParseMode = ParseMode.MARKDOWN_V2) -> bool:
         """
         Versión síncrona del envío de mensajes con bot persistente.
         
@@ -197,12 +197,17 @@ class TelegramService:
 📅 {recommendation.fecha.strftime('%Y-%m-%d %H:%M')}
 """
             
-            return message.strip()
+            return self._escape_markdown_v2(message.strip())
             
         except Exception as e:
             logger.error(f"❌ Error formateando mensaje: {e}")
             return f"❌ Error formateando recomendación para {recommendation.simbolo}"
     
+    def _escape_markdown_v2(self, text: str) -> str:
+        """Escapa caracteres especiales para Markdown V2."""
+        escape_chars = '_*[]()~`>#+-=|{}.!'
+        return ''.join('\\' + char if char in escape_chars else char for char in text)
+
     def _format_parameters(self, params: Dict[str, Any]) -> str:
         """
         Formatea los parámetros optimizados para mostrar en Telegram.
@@ -287,7 +292,7 @@ class TelegramService:
 🤖 Reporte generado por Trading AI
 """
             
-            return message.strip()
+            return self._escape_markdown_v2(message.strip())
             
         except Exception as e:
             logger.error(f"❌ Error formateando resumen diario: {e}")

@@ -336,15 +336,15 @@ Aplica tu experiencia y sentido común para evaluar esta oportunidad. **IMPORTAN
   "reasoning": "Tu análisis detallado de por qué esta oportunidad es buena/mala/regular y por qué elegiste esa estrategia",
   "market_context": "Contexto del mercado actual y cómo afecta esta oportunidad",
   "strategy_analysis": {{
-    "recommended_strategy": "grid",
+    "recommended_strategy": "dca/btd/grid",
     "strategy_reasoning": "Por qué esta estrategia es la mejor para esta criptomoneda",
     "alternative_strategies": "Breve comentario sobre por qué las otras 2 estrategias son menos adecuadas"
   }},
   "risk_factors": ["Factor de riesgo 1", "Factor de riesgo 2"],
   "opportunity_factors": ["Factor positivo 1", "Factor positivo 2"],
   "strategic_notes": "Notas estratégicas específicas para la estrategia recomendada",
-  "confidence_level": "high",
-  "recommendation": "buy",
+  "confidence_level": "high/medium/low",
+  "recommendation": "buy/hold/avoid",
   "execution_notes": "Notas sobre cuándo y cómo ejecutar la estrategia recomendada"
 }}
 ```
