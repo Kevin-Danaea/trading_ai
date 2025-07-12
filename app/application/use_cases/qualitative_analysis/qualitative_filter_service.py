@@ -131,22 +131,25 @@ class QualitativeFilterService:
             analysis_data = self._parse_gemini_response(str(response.text))
             
             if analysis_data:
+                # Normalizar y validar datos antes de crear QualitativeAnalysis
+                normalized_data = self._normalize_gemini_response(analysis_data)
+                
                 # Extraer análisis de estrategia
-                strategy_analysis = analysis_data.get('strategy_analysis', {})
+                strategy_analysis = normalized_data.get('strategy_analysis', {})
                 
                 return QualitativeAnalysis(
-                    reasoning=analysis_data.get('reasoning', ''),
-                    market_context=analysis_data.get('market_context', ''),
-                    risk_factors=analysis_data.get('risk_factors', []),
-                    opportunity_factors=analysis_data.get('opportunity_factors', []),
+                    reasoning=normalized_data.get('reasoning', ''),
+                    market_context=normalized_data.get('market_context', ''),
+                    risk_factors=normalized_data.get('risk_factors', []),
+                    opportunity_factors=normalized_data.get('opportunity_factors', []),
                     recommended_strategy=strategy_analysis.get('recommended_strategy', 'grid'),
                     strategy_reasoning=strategy_analysis.get('strategy_reasoning', 'Análisis no disponible'),
                     alternative_strategies_notes=strategy_analysis.get('alternative_strategies', 'No especificado'),
-                    strategic_notes=analysis_data.get('strategic_notes', ''),
-                    confidence_level=analysis_data.get('confidence_level', 'medium'),
-                    recommendation=analysis_data.get('recommendation', 'hold'),
+                    strategic_notes=normalized_data.get('strategic_notes', ''),
+                    confidence_level=normalized_data.get('confidence_level', 'medium'),
+                    recommendation=normalized_data.get('recommendation', 'hold'),
                     analysis_timestamp=datetime.now(),
-                    execution_notes=analysis_data.get('execution_notes')
+                    execution_notes=normalized_data.get('execution_notes')
                 )
             
             return None
@@ -154,6 +157,116 @@ class QualitativeFilterService:
         except Exception as e:
             logger.error(f"❌ Error obteniendo análisis de Gemini: {e}")
             return None
+    
+    def _normalize_gemini_response(self, analysis_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Normaliza la respuesta de Gemini para asegurar formato correcto.
+        
+        Args:
+            analysis_data: Datos crudos de Gemini
+            
+        Returns:
+            Datos normalizados
+        """
+        try:
+            normalized = analysis_data.copy()
+            
+            # Normalizar recommendation
+            recommendation = analysis_data.get('recommendation', 'hold')
+            if isinstance(recommendation, str):
+                recommendation = recommendation.lower().strip()
+                # Mapear variaciones comunes
+                recommendation_mapping = {
+                    'buy': 'buy',
+                    'compra': 'buy',
+                    'comprar': 'buy',
+                    'strong buy': 'buy',
+                    'strong_buy': 'buy',
+                    'hold': 'hold',
+                    'mantener': 'hold',
+                    'esperar': 'hold',
+                    'neutral': 'hold',
+                    'avoid': 'avoid',
+                    'evitar': 'avoid',
+                    'sell': 'avoid',
+                    'vender': 'avoid',
+                    'no buy': 'avoid',
+                    'no_buy': 'avoid'
+                }
+                normalized['recommendation'] = recommendation_mapping.get(recommendation, 'hold')
+            else:
+                normalized['recommendation'] = 'hold'
+            
+            # Normalizar confidence_level
+            confidence = analysis_data.get('confidence_level', 'medium')
+            if isinstance(confidence, str):
+                confidence = confidence.lower().strip()
+                # Mapear variaciones comunes
+                confidence_mapping = {
+                    'high': 'high',
+                    'alto': 'high',
+                    'alta': 'high',
+                    'medium': 'medium',
+                    'medio': 'medium',
+                    'moderado': 'medium',
+                    'low': 'low',
+                    'bajo': 'low',
+                    'baja': 'low'
+                }
+                normalized['confidence_level'] = confidence_mapping.get(confidence, 'medium')
+            else:
+                normalized['confidence_level'] = 'medium'
+            
+            # Normalizar recommended_strategy
+            strategy_analysis = analysis_data.get('strategy_analysis', {})
+            if isinstance(strategy_analysis, dict):
+                strategy = strategy_analysis.get('recommended_strategy', 'grid')
+                if isinstance(strategy, str):
+                    strategy = strategy.lower().strip()
+                    # Mapear variaciones comunes
+                    strategy_mapping = {
+                        'grid': 'grid',
+                        'grid trading': 'grid',
+                        'grid_trading': 'grid',
+                        'dca': 'dca',
+                        'dollar cost averaging': 'dca',
+                        'dollar_cost_averaging': 'dca',
+                        'btd': 'btd',
+                        'buy the dip': 'btd',
+                        'buy_the_dip': 'btd'
+                    }
+                    strategy_analysis['recommended_strategy'] = strategy_mapping.get(strategy, 'grid')
+                else:
+                    strategy_analysis['recommended_strategy'] = 'grid'
+            else:
+                strategy_analysis = {'recommended_strategy': 'grid'}
+            
+            normalized['strategy_analysis'] = strategy_analysis
+            
+            # Asegurar que las listas sean listas
+            if not isinstance(normalized.get('risk_factors'), list):
+                normalized['risk_factors'] = []
+            if not isinstance(normalized.get('opportunity_factors'), list):
+                normalized['opportunity_factors'] = []
+            
+            logger.info(f"✅ Respuesta de Gemini normalizada: recommendation={normalized['recommendation']}, confidence={normalized['confidence_level']}, strategy={strategy_analysis['recommended_strategy']}")
+            
+            return normalized
+            
+        except Exception as e:
+            logger.error(f"❌ Error normalizando respuesta de Gemini: {e}")
+            # Retornar valores por defecto seguros
+            return {
+                'recommendation': 'hold',
+                'confidence_level': 'medium',
+                'strategy_analysis': {'recommended_strategy': 'grid'},
+                'risk_factors': [],
+                'opportunity_factors': [],
+                'reasoning': analysis_data.get('reasoning', 'Error en normalización'),
+                'market_context': analysis_data.get('market_context', ''),
+                'strategic_notes': analysis_data.get('strategic_notes', ''),
+                'execution_notes': analysis_data.get('execution_notes')
+            }
     
     def _build_strategy_master_prompt(self, opportunity: TradingOpportunity) -> str:
         """
@@ -216,32 +329,40 @@ Aplica tu experiencia y sentido común para evaluar esta oportunidad. **IMPORTAN
 - **DCA**: Mejor para tendencias alcistas sostenidas o mercados inciertos
 - **BTD**: Óptimo para aprovechar dips en activos con fundamentos sólidos
 
-**RESPONDE EN FORMATO JSON:**
+**RESPONDE EN FORMATO JSON EXACTO:**
 
 ```json
 {{
   "reasoning": "Tu análisis detallado de por qué esta oportunidad es buena/mala/regular y por qué elegiste esa estrategia",
   "market_context": "Contexto del mercado actual y cómo afecta esta oportunidad",
   "strategy_analysis": {{
-    "recommended_strategy": "grid/dca/btd",
+    "recommended_strategy": "grid",
     "strategy_reasoning": "Por qué esta estrategia es la mejor para esta criptomoneda",
     "alternative_strategies": "Breve comentario sobre por qué las otras 2 estrategias son menos adecuadas"
   }},
-  "risk_factors": ["Factor de riesgo 1", "Factor de riesgo 2", "..."],
-  "opportunity_factors": ["Factor positivo 1", "Factor positivo 2", "..."],
+  "risk_factors": ["Factor de riesgo 1", "Factor de riesgo 2"],
+  "opportunity_factors": ["Factor positivo 1", "Factor positivo 2"],
   "strategic_notes": "Notas estratégicas específicas para la estrategia recomendada",
-  "confidence_level": "high/medium/low",
-  "recommendation": "buy/hold/avoid",
+  "confidence_level": "high",
+  "recommendation": "buy",
   "execution_notes": "Notas sobre cuándo y cómo ejecutar la estrategia recomendada"
 }}
 ```
 
+**FORMATO OBLIGATORIO - NO CAMBIES LOS NOMBRES DE CAMPOS:**
+
+- **recommended_strategy**: DEBE ser exactamente "grid", "dca", o "btd" (sin espacios, sin mayúsculas)
+- **confidence_level**: DEBE ser exactamente "high", "medium", o "low" (sin mayúsculas)
+- **recommendation**: DEBE ser exactamente "buy", "hold", o "avoid" (sin mayúsculas)
+
 **CRITERIOS DE EVALUACIÓN:**
-- ✅ **BUY**: Oportunidad excelente con riesgo controlado y estrategia clara
-- ⚠️ **HOLD**: Oportunidad interesante pero con reservas o timing incierto
-- ❌ **AVOID**: Demasiado riesgo o métricas engañosas
+- ✅ **buy**: Oportunidad excelente con riesgo controlado y estrategia clara
+- ⚠️ **hold**: Oportunidad interesante pero con reservas o timing incierto  
+- ❌ **avoid**: Demasiado riesgo o métricas engañosas
 
 **IMPORTANTE**: Debes elegir UNA de las 3 estrategias como recomendada y explicar por qué es mejor que las otras dos. Sé crítico pero constructivo. Tu análisis determinará si invertimos dinero real.
+
+**RECUERDA**: Usa SOLO los valores exactos especificados arriba para los campos recommendation, confidence_level y recommended_strategy.
 """
         
         return prompt
