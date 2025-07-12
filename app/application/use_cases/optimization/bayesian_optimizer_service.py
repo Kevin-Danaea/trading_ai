@@ -72,7 +72,7 @@ class BayesianOptimizerService:
     def optimize_symbol(self, 
                        symbol: str, 
                        strategy: str = 'grid',
-                       n_trials: int = 150,
+                       n_trials: int = 50,
                        timeout_minutes: int = 30) -> Optional[OptimizationResult]:
         """
         Optimiza una estrategia específica para un símbolo.
@@ -309,11 +309,11 @@ class BayesianOptimizerService:
         try:
             # Espacios de búsqueda inteligentes para Grid Trading
             params = {
-                'levels': trial.suggest_int('levels', 3, 8),
-                'range_percent': trial.suggest_float('range_percent', 2.0, 15.0),
-                'umbral_adx': trial.suggest_float('umbral_adx', 15.0, 40.0),
-                'umbral_volatilidad': trial.suggest_float('umbral_volatilidad', 0.01, 0.05),
-                'umbral_sentimiento': trial.suggest_float('umbral_sentimiento', -0.3, 0.3),
+                'levels': trial.suggest_int('levels', 5, 180),  # Corregido: 5-180 como permite Bitsgap
+                'range_percent': trial.suggest_float('range_percent', 1.0, 20.0),  # Más flexible: 1-20%
+                'umbral_adx': trial.suggest_float('umbral_adx', 10.0, 50.0),  # Más flexible: 10-50
+                'umbral_volatilidad': trial.suggest_float('umbral_volatilidad', 0.005, 0.08),  # Más flexible: 0.5-8%
+                'umbral_sentimiento': trial.suggest_float('umbral_sentimiento', -0.5, 0.5),  # Más flexible: -0.5 a 0.5
             }
             
             # Ejecutar backtesting moderno
@@ -354,12 +354,17 @@ class BayesianOptimizerService:
         """Función objetivo para optimización de DCA."""
         try:
             params = {
-                'intervalo_compra': trial.suggest_int('intervalo_compra', 1, 7),
-                'monto_compra': trial.suggest_float('monto_compra', 0.1, 1.0),
-                'objetivo_ganancia': trial.suggest_float('objetivo_ganancia', 0.05, 0.30),
-                'dip_threshold': trial.suggest_float('dip_threshold', 0.02, 0.15),
-                'tendencia_alcista_dias': trial.suggest_int('tendencia_alcista_dias', 3, 14),
-                'stop_loss': trial.suggest_float('stop_loss', 0.10, 0.40),
+                # El % que debe caer el precio desde un máximo reciente para disparar una compra
+                'dip_threshold': trial.suggest_float('dip_threshold', 0.02, 0.15), # Probar caídas del 2% al 15%
+                
+                # El % de ganancia sobre el precio promedio para vender toda la posición
+                'take_profit': trial.suggest_float('take_profit', 0.05, 0.30), # Probar objetivos del 5% al 30%
+                
+                # El % de stop loss sobre el precio promedio para proteger el capital
+                'stop_loss': trial.suggest_float('stop_loss', 0.10, 0.40), # Probar stops del 10% al 40%
+
+                # Filtros de Sentimiento y Tendencia Macro (ADX se podría usar aquí también)
+                'umbral_sentimiento': trial.suggest_float('umbral_sentimiento', -0.2, 0.2),
             }
             
             # Ejecutar backtesting DCA moderno
@@ -400,12 +405,17 @@ class BayesianOptimizerService:
         """Función objetivo para optimización de BTD."""
         try:
             params = {
-                'intervalo_venta': trial.suggest_int('intervalo_venta', 1, 7),
-                'monto_venta': trial.suggest_float('monto_venta', 0.1, 1.0),
-                'objetivo_ganancia': trial.suggest_float('objetivo_ganancia', 0.05, 0.25),
-                'rip_threshold': trial.suggest_float('rip_threshold', 0.02, 0.12),
-                'tendencia_bajista_dias': trial.suggest_int('tendencia_bajista_dias', 3, 14),
-                'stop_loss': trial.suggest_float('stop_loss', 0.10, 0.35),
+                # El % que debe subir el precio desde un mínimo reciente para disparar una venta
+                'rip_threshold': trial.suggest_float('rip_threshold', 0.02, 0.15), # Probar subidas del 2% al 15%
+                
+                # El % de ganancia (en la moneda base) para recomprar toda la posición
+                'take_profit': trial.suggest_float('take_profit', 0.03, 0.25), # Probar objetivos del 3% al 25%
+                
+                # El % de stop loss si el precio sigue subiendo en nuestra contra
+                'stop_loss': trial.suggest_float('stop_loss', 0.10, 0.35), # Probar stops del 10% al 35%
+
+                # Filtros de Sentimiento y Tendencia Macro
+                'umbral_sentimiento': trial.suggest_float('umbral_sentimiento', -0.2, 0.2),
             }
             
             # Ejecutar backtesting BTD moderno

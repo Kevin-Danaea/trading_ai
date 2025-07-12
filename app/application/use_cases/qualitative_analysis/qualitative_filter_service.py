@@ -51,7 +51,7 @@ class QualitativeFilterService:
         
         # Configurar cliente de Gemini con la nueva API
         self.client = genai.Client(api_key=self.api_key)
-        self.model_name = 'gemini-1.5-flash'
+        self.model_name = 'gemini-2.5-pro'
         
         logger.info("🧠 QualitativeFilterService inicializado con Gemini")
     

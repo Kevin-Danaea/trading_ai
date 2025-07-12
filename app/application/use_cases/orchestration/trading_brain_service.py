@@ -77,7 +77,7 @@ class TradingBrainService:
         self.optimizer = BayesianOptimizerService(
             backtesting_service=backtesting_service,
             data_service=market_data_provider,  # Usar como data service
-            optimization_window_months=9
+            optimization_window_months=12  # Aumentado de 9 a 12 meses para mejor validación
         )
         
         self.ranker = OpportunityRankingService(
@@ -192,6 +192,12 @@ class TradingBrainService:
             qualitative_summary = self.qualitative_filter.get_execution_summary(qualitative_results)
             
             # Crear resultado final
+            try:
+                recommendations = self._generate_recommendations_with_qualitative(ranking_result, qualitative_results)
+            except Exception as rec_error:
+                logger.error(f"❌ Error generando recomendaciones: {rec_error}")
+                recommendations = []
+            
             result = {
                 'top_opportunities': ranking_result.top_opportunities,
                 'ranking_result': ranking_result,
@@ -199,7 +205,7 @@ class TradingBrainService:
                 'qualitative_summary': qualitative_summary,
                 'execution_summary': execution_summary,
                 'timing_breakdown': timing,
-                'recommendations': self._generate_recommendations_with_qualitative(ranking_result, qualitative_results)
+                'recommendations': recommendations
             }
             
             self._log_final_results(result)
@@ -246,8 +252,8 @@ class TradingBrainService:
                     strategy_result = self.optimizer.optimize_symbol(
                         symbol=symbol,
                         strategy=strategy,
-                        n_trials=50,  # Reducido para velocidad
-                        timeout_minutes=3  # Límite de tiempo por estrategia
+                        n_trials=150,  # Aumentado de 50 a 150 para mejor exploración
+                        timeout_minutes=10  # Aumentado de 3 a 10 minutos por estrategia
                     )
                     
                     if strategy_result:
@@ -316,70 +322,132 @@ class TradingBrainService:
         Returns:
             Lista de recomendaciones finales priorizadas
         """
-        recommendations = []
-        
-        # Crear mapa de resultados cualitativos por símbolo
-        qualitative_map = {}
-        for result in qualitative_results:
-            symbol = result.opportunity.candidate.symbol
-            qualitative_map[symbol] = result
-        
-        # Generar recomendaciones combinando ambos análisis
-        for i, opportunity in enumerate(ranking_result.top_opportunities, 1):
-            symbol = opportunity.candidate.symbol
-            qualitative_result = qualitative_map.get(symbol)
+        try:
+            logger.info(f"🔍 Iniciando _generate_recommendations_with_qualitative")
+            logger.info(f"   ranking_result type: {type(ranking_result)}")
+            logger.info(f"   qualitative_results type: {type(qualitative_results)}")
+            logger.info(f"   qualitative_results length: {len(qualitative_results)}")
             
-            if qualitative_result:
-                # Recomendación con análisis cualitativo
-                recommendation = {
-                    'rank': i,
-                    'symbol': symbol,
-                    'strategy': opportunity.strategy_name,
-                    'quantitative_score': opportunity.final_score,
-                    'qualitative_recommendation': qualitative_result.analysis.recommendation,
-                    'qualitative_confidence': qualitative_result.analysis.confidence_level,
-                    'combined_confidence_score': qualitative_result.confidence_score,
-                    'execution_priority': qualitative_result.execution_priority,
-                    'strategic_recommendation': qualitative_result.strategic_recommendation,
-                    'risk_assessment': qualitative_result.risk_assessment,
-                    'roi_expected': opportunity.roi_percentage,
-                    'sharpe_ratio': opportunity.sharpe_ratio,
-                    'max_drawdown': opportunity.max_drawdown_percentage,
-                    'reasoning': qualitative_result.analysis.reasoning,
-                    'market_context': qualitative_result.analysis.market_context,
-                    'risk_factors': qualitative_result.analysis.risk_factors,
-                    'opportunity_factors': qualitative_result.analysis.opportunity_factors,
-                    'strategic_notes': qualitative_result.analysis.strategic_notes
-                }
-            else:
-                # Recomendación solo cuantitativa (fallback)
-                recommendation = {
-                    'rank': i,
-                    'symbol': symbol,
-                    'strategy': opportunity.strategy_name,
-                    'quantitative_score': opportunity.final_score,
-                    'qualitative_recommendation': 'hold',  # Conservador si no hay análisis
-                    'qualitative_confidence': 'medium',
-                    'combined_confidence_score': opportunity.final_score,
-                    'execution_priority': 3,  # Prioridad media
-                    'strategic_recommendation': f"⚠️ MONITOREAR: {symbol} - Análisis cualitativo pendiente",
-                    'risk_assessment': "🟡 RIESGO MODERADO",
-                    'roi_expected': opportunity.roi_percentage,
-                    'sharpe_ratio': opportunity.sharpe_ratio,
-                    'max_drawdown': opportunity.max_drawdown_percentage,
-                    'reasoning': 'Análisis cualitativo no disponible',
-                    'market_context': 'Pendiente de análisis cualitativo',
-                    'risk_factors': [],
-                    'opportunity_factors': [],
-                    'strategic_notes': 'Requiere análisis cualitativo adicional'
-                }
+            recommendations = []
             
-            recommendations.append(recommendation)
-        
-        # Ordenar por prioridad de ejecución y confianza combinada
-        recommendations.sort(key=lambda x: (x['execution_priority'], -x['combined_confidence_score']))
-        
-        return recommendations
+            # Crear mapa de resultados cualitativos por símbolo
+            qualitative_map = {}
+            for i, result in enumerate(qualitative_results):
+                try:
+                    logger.info(f"   Procesando resultado {i+1}: {type(result)}")
+                    if hasattr(result, 'opportunity'):
+                        logger.info(f"     result.opportunity type: {type(result.opportunity)}")
+                        if hasattr(result.opportunity, 'candidate'):
+                            logger.info(f"     result.opportunity.candidate type: {type(result.opportunity.candidate)}")
+                            if hasattr(result.opportunity.candidate, 'symbol'):
+                                symbol = result.opportunity.candidate.symbol
+                                logger.info(f"     Symbol encontrado: {symbol}")
+                                qualitative_map[symbol] = result
+                            else:
+                                logger.error(f"     ❌ result.opportunity.candidate no tiene atributo 'symbol'")
+                        else:
+                            logger.error(f"     ❌ result.opportunity no tiene atributo 'candidate'")
+                    else:
+                        logger.error(f"     ❌ result no tiene atributo 'opportunity'")
+                except Exception as map_error:
+                    logger.error(f"❌ Error mapeando resultado cualitativo {i+1}: {map_error}")
+                    logger.error(f"   Tipo de result: {type(result)}")
+                    logger.error(f"   Atributos disponibles: {dir(result) if hasattr(result, '__dict__') else 'No __dict__'}")
+                    continue
+            
+            logger.info(f"   Mapa cualitativo creado: {len(qualitative_map)} elementos")
+            
+            # Generar recomendaciones combinando ambos análisis
+            for i, opportunity in enumerate(ranking_result.top_opportunities, 1):
+                try:
+                    logger.info(f"   Procesando oportunidad {i}: {type(opportunity)}")
+                    if hasattr(opportunity, 'candidate'):
+                        logger.info(f"     opportunity.candidate type: {type(opportunity.candidate)}")
+                        if hasattr(opportunity.candidate, 'symbol'):
+                            symbol = opportunity.candidate.symbol
+                            logger.info(f"     Symbol de oportunidad: {symbol}")
+                        else:
+                            logger.error(f"     ❌ opportunity.candidate no tiene atributo 'symbol'")
+                            continue
+                    else:
+                        logger.error(f"     ❌ opportunity no tiene atributo 'candidate'")
+                        continue
+                    
+                    qualitative_result = qualitative_map.get(symbol)
+                    
+                    if qualitative_result:
+                        logger.info(f"     ✅ Análisis cualitativo encontrado para {symbol}")
+                        # Recomendación con análisis cualitativo
+                        recommendation = {
+                            'type': 'qualitative',  # Agregar campo type para compatibilidad
+                            'rank': i,
+                            'symbol': symbol,
+                            'strategy': opportunity.strategy_name,
+                            'quantitative_score': opportunity.final_score,
+                            'qualitative_recommendation': qualitative_result.analysis.recommendation,
+                            'qualitative_confidence': qualitative_result.analysis.confidence_level,
+                            'combined_confidence_score': qualitative_result.confidence_score,
+                            'execution_priority': qualitative_result.execution_priority,
+                            'strategic_recommendation': qualitative_result.strategic_recommendation,
+                            'risk_assessment': qualitative_result.risk_assessment,
+                            'roi_expected': opportunity.roi_percentage,
+                            'sharpe_ratio': opportunity.sharpe_ratio,
+                            'max_drawdown': opportunity.max_drawdown_percentage,
+                            'reasoning': qualitative_result.analysis.reasoning,
+                            'market_context': qualitative_result.analysis.market_context,
+                            'risk_factors': qualitative_result.analysis.risk_factors,
+                            'opportunity_factors': qualitative_result.analysis.opportunity_factors,
+                            'strategic_notes': qualitative_result.analysis.strategic_notes
+                        }
+                    else:
+                        logger.info(f"     ⚠️ No hay análisis cualitativo para {symbol}, usando fallback")
+                        # Recomendación solo cuantitativa (fallback)
+                        recommendation = {
+                            'type': 'quantitative',  # Agregar campo type para compatibilidad
+                            'rank': i,
+                            'symbol': symbol,
+                            'strategy': opportunity.strategy_name,
+                            'quantitative_score': opportunity.final_score,
+                            'qualitative_recommendation': 'hold',  # Conservador si no hay análisis
+                            'qualitative_confidence': 'medium',
+                            'combined_confidence_score': opportunity.final_score,
+                            'execution_priority': 3,  # Prioridad media
+                            'strategic_recommendation': f"⚠️ MONITOREAR: {symbol} - Análisis cualitativo pendiente",
+                            'risk_assessment': "🟡 RIESGO MODERADO",
+                            'roi_expected': opportunity.roi_percentage,
+                            'sharpe_ratio': opportunity.sharpe_ratio,
+                            'max_drawdown': opportunity.max_drawdown_percentage,
+                            'reasoning': 'Análisis cualitativo no disponible',
+                            'market_context': 'Pendiente de análisis cualitativo',
+                            'risk_factors': [],
+                            'opportunity_factors': [],
+                            'strategic_notes': 'Requiere análisis cualitativo adicional'
+                        }
+                    
+                    recommendations.append(recommendation)
+                    logger.info(f"     ✅ Recomendación {i} creada para {symbol}")
+                    
+                except Exception as opp_error:
+                    logger.error(f"❌ Error procesando oportunidad {i}: {opp_error}")
+                    logger.error(f"   Tipo de opportunity: {type(opportunity)}")
+                    logger.error(f"   Atributos disponibles: {dir(opportunity) if hasattr(opportunity, '__dict__') else 'No __dict__'}")
+                    continue
+            
+            logger.info(f"   Recomendaciones creadas: {len(recommendations)}")
+            
+            # Ordenar por prioridad de ejecución y confianza combinada
+            recommendations.sort(key=lambda x: (x['execution_priority'], -x['combined_confidence_score']))
+            
+            logger.info(f"   ✅ _generate_recommendations_with_qualitative completado exitosamente")
+            return recommendations
+            
+        except Exception as e:
+            logger.error(f"❌ Error en _generate_recommendations_with_qualitative: {e}")
+            logger.error(f"   Tipo de ranking_result: {type(ranking_result)}")
+            logger.error(f"   Tipo de qualitative_results: {type(qualitative_results)}")
+            import traceback
+            logger.error(f"   Traceback: {traceback.format_exc()}")
+            return []
     
     def _generate_recommendations(self, ranking_result: RankingResult) -> List[Dict[str, Any]]:
         """Genera recomendaciones basadas en los resultados del ranking."""
@@ -511,6 +579,19 @@ class TradingBrainService:
         if recommendations:
             logger.info(f"\n💡 RECOMENDACIONES:")
             for rec in recommendations:
-                logger.info(f"   {rec['type'].upper()}: {rec['message']}")
+                # Manejar diferentes tipos de recomendaciones
+                if 'message' in rec:
+                    # Recomendaciones tradicionales (primary, success, warning, etc.)
+                    logger.info(f"   {rec['type'].upper()}: {rec['message']}")
+                elif 'symbol' in rec:
+                    # Recomendaciones cualitativas/cuantitativas
+                    rec_type = rec.get('type', 'unknown').upper()
+                    symbol = rec.get('symbol', 'Unknown')
+                    strategy = rec.get('strategy', 'Unknown')
+                    recommendation = rec.get('qualitative_recommendation', 'hold')
+                    logger.info(f"   {rec_type}: {symbol} ({strategy.upper()}) - {recommendation.upper()}")
+                else:
+                    # Fallback para cualquier otro tipo
+                    logger.info(f"   {rec.get('type', 'UNKNOWN').upper()}: Recomendación disponible")
         
         logger.info("=" * 80) 

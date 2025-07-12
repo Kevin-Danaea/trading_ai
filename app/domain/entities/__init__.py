@@ -10,6 +10,7 @@ from .crypto_candidate import CryptoCandidate
 from .optimization_result import OptimizationResult
 from .trading_opportunity import TradingOpportunity, RankingResult, StrategyResult
 from .qualitative_analysis import QualitativeAnalysis
+from .daily_recommendation import RecomendacionDiaria
 
 # Exportar todas las entidades disponibles
 __all__ = [
@@ -18,5 +19,6 @@ __all__ = [
     'TradingOpportunity',
     'RankingResult',
     'StrategyResult',
-    'QualitativeAnalysis'
+    'QualitativeAnalysis',
+    'RecomendacionDiaria'
 ]

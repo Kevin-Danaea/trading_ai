@@ -88,31 +88,70 @@ def run_modern_backtest(df: pd.DataFrame,
     try:
         logger.info(f"🚀 Ejecutando backtesting moderno con {strategy_class.__name__}")
         
-        # Validar DataFrame
-        required_columns = ['Open', 'High', 'Low', 'Close']
-        missing_columns = [col for col in required_columns if col not in df.columns]
+        # Preparar datos - copiar DataFrame original
+        df_bt = df.copy()
+        
+        # Normalizar nombres de columnas a minúsculas primero
+        df_bt.columns = [col.lower() for col in df_bt.columns]
+        
+        # Verificar que tenemos las columnas OHLC básicas (en minúsculas)
+        required_columns_lower = ['open', 'high', 'low', 'close']
+        missing_columns = [col for col in required_columns_lower if col not in df_bt.columns]
         if missing_columns:
             raise ValueError(f"Columnas faltantes en DataFrame: {missing_columns}")
         
-        # Preparar datos - backtesting.py espera columnas con mayúsculas
-        df_bt = df.copy()
-        df_bt.columns = [col.capitalize() for col in df_bt.columns]
+        # Convertir columnas OHLC a mayúsculas (requerido por backtesting.py)
+        column_mapping = {
+            'open': 'Open',
+            'high': 'High', 
+            'low': 'Low',
+            'close': 'Close'
+        }
         
-        # Asegurar que tenemos las columnas correctas
-        if 'Open' not in df_bt.columns:
-            df_bt['Open'] = df_bt.get('open', df_bt['Close'].shift(1).fillna(df_bt['Close']))
-        if 'High' not in df_bt.columns:
-            df_bt['High'] = df_bt.get('high', df_bt['Close'])
-        if 'Low' not in df_bt.columns:
-            df_bt['Low'] = df_bt.get('low', df_bt['Close'])
-        if 'Volume' not in df_bt.columns and 'volume' in df.columns:
-            df_bt['Volume'] = df['volume']
+        # Renombrar columnas OHLC a mayúsculas
+        df_bt = df_bt.rename(columns=column_mapping)
         
-        # Eliminar valores nulos
+        # Manejar columna Volume si existe
+        if 'volume' in df_bt.columns:
+            df_bt = df_bt.rename(columns={'volume': 'Volume'})
+        
+        # Asegurar que tenemos la columna sentiment para las estrategias que la necesiten
+        if 'sentiment_score' in df_bt.columns and 'sentiment' not in df_bt.columns:
+            df_bt['sentiment'] = df_bt['sentiment_score']
+        elif 'sentiment' not in df_bt.columns:
+            df_bt['sentiment'] = 0.0
+        
+        # Eliminar valores nulos en columnas OHLC
         df_bt = df_bt.dropna(subset=['Open', 'High', 'Low', 'Close'])
         
         if len(df_bt) < 30:
             raise ValueError(f"Datos insuficientes después de limpieza: {len(df_bt)} registros")
+        
+        # Validar que High >= Low y precios sean positivos
+        df_bt = df_bt[(df_bt['High'] >= df_bt['Low']) & (df_bt['Close'] > 0)].copy()
+        assert isinstance(df_bt, pd.DataFrame)
+        
+        if len(df_bt) < 30:
+            raise ValueError(f"Datos insuficientes después de validación: {len(df_bt)} registros")
+        
+        # Limpiar valores NaN en todas las columnas numéricas
+        numeric_columns = df_bt.select_dtypes(include=[np.number]).columns
+        for col in numeric_columns:
+            if col in df_bt.columns:
+                # Para columnas de precios, usar forward fill
+                if col in ['Open', 'High', 'Low', 'Close']:
+                    df_bt[col] = df_bt[col].ffill().bfill()
+                else:
+                    # Para otros indicadores, usar 0 o valor por defecto
+                    df_bt[col] = df_bt[col].fillna(0.0)
+        
+        # Validar que no quedan NaN después de la limpieza
+        if df_bt.isnull().values.any():
+            logger.warning("Aún hay valores NaN después de limpieza, eliminando filas...")
+            df_bt = df_bt.dropna()
+        
+        if len(df_bt) < 30:
+            raise ValueError(f"Datos insuficientes después de limpieza final: {len(df_bt)} registros")
         
         # Configurar estrategia con parámetros
         class ConfiguredStrategy(strategy_class):

@@ -34,7 +34,7 @@ class BTDStrategy(Strategy):
     - stop_loss: % de pérdida máxima (0.10-0.35)
     """
     
-    # Parámetros optimizables
+    # Parámetros optimizables - Valores originales restrictivos
     intervalo_venta = 2
     monto_venta = 0.25  # 25% del capital por operación
     objetivo_ganancia = 0.12  # 12% de ganancia
@@ -45,9 +45,19 @@ class BTDStrategy(Strategy):
     def init(self):
         """Inicializa la estrategia BTD."""
         
-        # Calcular indicadores
-        self.sma_trend = self.I(lambda x: pd.Series(x).rolling(14).mean(), self.data.Close)
-        self.rsi = self.I(self.calculate_rsi, self.data.Close)
+        # Validar datos antes de calcular indicadores
+        if len(self.data.df) < 14:
+            raise ValueError("Datos insuficientes para BTD (mínimo 14 períodos)")
+        
+        # Calcular indicadores con manejo de NaN
+        try:
+            self.sma_trend = self.I(lambda x: pd.Series(x).rolling(14, min_periods=1).mean(), self.data.Close)
+            self.rsi = self.I(self.calculate_rsi, self.data.Close)
+        except Exception as e:
+            logger.warning(f"Error calculando indicadores BTD: {e}")
+            # Valores por defecto
+            self.sma_trend = pd.Series(self.data.Close, index=self.data.df.index)
+            self.rsi = pd.Series(50.0, index=self.data.df.index)
         
         # Variables de estado
         self.last_operation_day = -self.intervalo_venta
@@ -59,10 +69,25 @@ class BTDStrategy(Strategy):
     def calculate_rsi(self, prices: pd.Series, period: int = 14) -> pd.Series:
         """Calcula RSI para detectar sobrecompra/sobreventa."""
         try:
+            # Validar datos
+            if len(prices) < period:
+                return pd.Series(50.0, index=prices.index)
+            
+            # Convertir a pandas Series si no lo es
+            if not isinstance(prices, pd.Series):
+                prices = pd.Series(prices)
+            
+            # Limpiar NaN
+            prices = prices.ffill().bfill()
+            
             delta = prices.diff()
-            gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
-            loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
-            rs = gain / loss
+            gain = (delta.where(delta > 0, 0)).rolling(window=period, min_periods=1).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(window=period, min_periods=1).mean()
+            
+            # Evitar división por cero
+            loss_safe = loss.copy()
+            loss_safe[loss_safe == 0] = 1e-10
+            rs = gain / loss_safe
             rsi = 100 - (100 / (1 + rs))
             
             # Asegurar que retornamos pandas Series y manejar NaN
@@ -78,6 +103,11 @@ class BTDStrategy(Strategy):
         """Confirma si estamos en un dip válido."""
         try:
             if len(self.data) < self.tendencia_bajista_dias:
+                return False
+            
+            # Validar que los indicadores no son NaN
+            if (pd.isna(float(self.data.Close[-1])) or pd.isna(float(self.data.Close[-self.tendencia_bajista_dias])) or
+                pd.isna(float(self.rsi[-1]))):
                 return False
             
             # Verificar que hay tendencia bajista reciente
@@ -98,9 +128,17 @@ class BTDStrategy(Strategy):
             if len(self.data) < 3:
                 return False
             
+            # Validar datos
+            recent_prices = self.data.Close[-3:]
+            if any(pd.isna(float(price)) for price in recent_prices):
+                return False
+            
             # Buscar recuperación desde mínimo reciente
-            recent_low = min(self.data.Close[-3:])
+            recent_low = min(recent_prices)
             current_price = self.data.Close[-1]
+            
+            if recent_low <= 0:
+                return False
             
             recovery_size = (current_price - recent_low) / recent_low
             return recovery_size >= self.rip_threshold
@@ -150,7 +188,9 @@ class BTDStrategy(Strategy):
             
             # Lógica de compra
             if self.should_buy(current_day):
-                self.buy(size=self.monto_venta)
+                # Asegurar que el tamaño sea válido para el broker
+                buy_size = max(0.1, self.monto_venta)  # Mínimo 10% del capital
+                self.buy(size=buy_size)
                 self.entry_price = current_price
                 self.last_operation_day = current_day
                 logger.debug(f"BTD compra: ${current_price:.4f}")

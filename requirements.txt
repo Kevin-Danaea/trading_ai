@@ -22,6 +22,9 @@ sqlalchemy>=2.0.0,<3.0.0          # ORM y conexiones a bases de datos
 psycopg2-binary>=2.9.0
 google-genai>=1.0.0     # Google Gen AI Python SDK oficial
 
+# === TELEGRAM ===
+python-telegram-bot>=21.0,<22.0   # Bot de Telegram para notificaciones
+
 # === OPTIMIZATION ===
 optuna>=3.4.0,<4.0.0              # Optimización bayesiana para hiperparámetros
 

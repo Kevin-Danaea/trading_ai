@@ -286,7 +286,7 @@ class MarketDataProvider:
             df['volatility'] = df['close'].pct_change().rolling(window=7).std()
             
             # Rellenar valores nulos
-            df = df.fillna(method='bfill').fillna(0)
+            df = df.bfill().fillna(0)
             
             return df
             

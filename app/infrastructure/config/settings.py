@@ -62,6 +62,10 @@ class Settings:
     # === DATABASE CONFIGURATION ===
     DATABASE_URL: str = os.getenv('DATABASE_URL', '')
     
+    # === TELEGRAM CONFIGURATION ===
+    TELEGRAM_BOT_TOKEN: str = os.getenv('TELEGRAM_BOT_TOKEN', '')
+    TELEGRAM_CHAT_ID: str = os.getenv('TELEGRAM_CHAT_ID', '')
+    
     # === TRADING CONFIGURATION ===
     DEFAULT_COMMISSION: float = float(_clean_env_value(os.getenv('DEFAULT_COMMISSION', '0.001')))  # 0.1%
     DEFAULT_INITIAL_CAPITAL: float = float(_clean_env_value(os.getenv('DEFAULT_INITIAL_CAPITAL', '1000.0')))

@@ -33,7 +33,7 @@ class GridTradingStrategy(Strategy):
     - umbral_sentimiento: Filtro de sentimiento (-0.3-0.3)
     """
     
-    # Parámetros optimizables
+    # Parámetros optimizables - Valores originales restrictivos
     levels = 4
     range_percent = 8.0
     umbral_adx = 25.0
@@ -60,31 +60,43 @@ class GridTradingStrategy(Strategy):
         self.active_orders = {}
         
         # Tamaño de posición fijo (porcentaje del capital)
-        self.position_size = 1.0 / self.levels  # Dividir capital entre niveles
+        # Asegurar que el tamaño sea al menos 0.15 (15%) para evitar errores del broker
+        self.position_size = max(0.15, 1.0 / self.levels)  # Mínimo 15% del capital
         
         logger.info(f"🔧 GridStrategy inicializada: {self.levels} niveles, ±{self.range_percent}%")
     
     def setup_indicators(self):
         """Calcula indicadores técnicos necesarios."""
         try:
+            # Validar que tenemos datos suficientes
+            if len(self.data.df) < 20:
+                raise ValueError("Datos insuficientes para calcular indicadores")
+            
             # ADX (Average Directional Index)
             if 'adx' not in self.data.df.columns:
                 self.adx = self.calculate_adx()
             else:
-                self.adx = self.data.df['adx']
+                self.adx = self.data.df['adx'].fillna(25.0)
             
             # Volatilidad
             if 'volatility' not in self.data.df.columns:
                 self.volatility = self.calculate_volatility()
             else:
-                self.volatility = self.data.df['volatility']
+                self.volatility = self.data.df['volatility'].fillna(0.03)
             
             # Sentimiento (si está disponible)
             if 'sentiment_ma7' in self.data.df.columns:
-                self.sentiment = self.data.df['sentiment_ma7']
+                self.sentiment = self.data.df['sentiment_ma7'].fillna(0.0)
+            elif 'sentiment_score' in self.data.df.columns:
+                self.sentiment = self.data.df['sentiment_score'].fillna(0.0)
             else:
                 # Crear sentimiento neutral si no está disponible
                 self.sentiment = pd.Series(0.0, index=self.data.df.index)
+            
+            # Validar que no hay NaN en los indicadores
+            self.adx = self.adx.fillna(25.0)
+            self.volatility = self.volatility.fillna(0.03)
+            self.sentiment = self.sentiment.fillna(0.0)
         
         except Exception as e:
             logger.warning(f"Error calculando indicadores: {e}")
@@ -101,8 +113,8 @@ class GridTradingStrategy(Strategy):
             low = np.array(self.data.Low) 
             close = np.array(self.data.Close)
             
-            # Cálculo simplificado de ADX
-            if len(high) < period:
+            # Validar datos
+            if len(high) < period or np.any(np.isnan(high)) or np.any(np.isnan(low)):
                 return pd.Series(25.0, index=self.data.df.index)
             
             # True Range básico
@@ -111,8 +123,14 @@ class GridTradingStrategy(Strategy):
             # Media móvil simple del TR como proxy de ADX
             adx_values = np.convolve(tr, np.ones(period)/period, mode='same')
             
-            # Normalizar entre 0-100
-            adx_values = np.clip(adx_values * 100 / np.max(adx_values), 0, 100)
+            # Normalizar entre 0-100 y manejar NaN
+            if np.max(adx_values) > 0:
+                adx_values = np.clip(adx_values * 100 / np.max(adx_values), 0, 100)
+            else:
+                adx_values = np.full_like(adx_values, 25.0)
+            
+            # Rellenar NaN
+            adx_values = np.nan_to_num(adx_values, nan=25.0)
             
             return pd.Series(adx_values, index=self.data.df.index)
         
@@ -124,11 +142,13 @@ class GridTradingStrategy(Strategy):
         try:
             close = np.array(self.data.Close)
             
-            if len(close) < 2:
+            # Validar datos
+            if len(close) < 2 or np.any(np.isnan(close)):
                 return pd.Series(0.03, index=self.data.df.index)
             
             # Calcular retornos
             returns = np.diff(close) / close[:-1]
+            returns = np.nan_to_num(returns, nan=0.0)  # Manejar división por cero
             
             # Volatilidad con ventana deslizante
             vol_values = []
@@ -137,7 +157,11 @@ class GridTradingStrategy(Strategy):
                     vol_values.append(0.03)  # Valor por defecto
                 else:
                     window_returns = returns[i-period:i]
-                    vol = np.std(window_returns) if len(window_returns) > 0 else 0.03
+                    if len(window_returns) > 0:
+                        vol = np.std(window_returns)
+                        vol = 0.03 if np.isnan(vol) or vol == 0 else vol
+                    else:
+                        vol = 0.03
                     vol_values.append(vol)
             
             return pd.Series(vol_values, index=self.data.df.index)
@@ -227,10 +251,12 @@ class GridTradingStrategy(Strategy):
                     level not in self.active_orders):
                     
                     # Comprar en nivel de soporte
-                    self.buy(size=self.position_size)
-                    self.active_orders[level] = 'buy'
-                    logger.debug(f"Compra en nivel {level:.4f}")
-                    break
+                    # Verificar que hay suficiente capital disponible
+                    if self.equity > 0 and self.position_size > 0:
+                        self.buy(size=self.position_size)
+                        self.active_orders[level] = 'buy'
+                        logger.debug(f"Compra en nivel {level:.4f}")
+                        break
             
             # Verificar niveles de venta
             for level in self.sell_levels:
@@ -239,7 +265,9 @@ class GridTradingStrategy(Strategy):
                     level not in self.active_orders):
                     
                     # Vender en nivel de resistencia
-                    self.sell(size=self.position.size)
+                    # Usar todo el tamaño de la posición disponible
+                    if self.position.size > 0:
+                        self.sell(size=self.position.size)
                     self.active_orders[level] = 'sell'
                     logger.debug(f"Venta en nivel {level:.4f}")
                     break
