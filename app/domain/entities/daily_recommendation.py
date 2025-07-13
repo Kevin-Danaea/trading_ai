@@ -61,13 +61,26 @@ class RecomendacionDiaria:
     categoria_rendimiento: str  # PREMIUM, AGGRESSIVE, CONSERVATIVE, BALANCED
     condiciones_mercado: str  # bullish, bearish, sideways
     periodo_backtesting_dias: int
+    categoria: str = "BALANCED"  # Categoría específica (GRID_SPOT, DCA_FUTURES, etc.)
+    
+    # === INFORMACIÓN DE DIRECCIONALIDAD Y FUTUROS ===
+    direccion: str = "long"  # 'long', 'short'
+    razon_direccion: str = ""  # Razón de la direccionalidad
+    es_futuros: bool = False  # True si es para futuros
+    apalancamiento_optimo: str = "x3"  # 'x3', 'x5', 'x10', 'x20'
+    riesgo_futuros: str = "medium"  # 'low', 'medium', 'high', 'extreme'
+    recomendacion_futuros: str = ""  # Recomendación específica para futuros
     
     # === METADATOS ===
-    creado_en: datetime
-    version_pipeline: str  # Para tracking de versiones
+    creado_en: Optional[datetime] = None
+    version_pipeline: str = "1.0"  # Para tracking de versiones
+    es_semanal: bool = False  # True para recomendaciones semanales
     
     def __post_init__(self):
         """Validaciones post-inicialización."""
+        if self.creado_en is None:
+            self.creado_en = datetime.now()
+        
         if not (0 <= self.score_final <= 100):
             raise ValueError(f"score_final debe estar entre 0-100, recibido: {self.score_final}")
         
@@ -76,6 +89,15 @@ class RecomendacionDiaria:
         
         if self.estrategia_recomendada not in ['grid', 'dca', 'btd']:
             raise ValueError(f"estrategia_recomendada debe ser 'grid', 'dca' o 'btd', recibido: {self.estrategia_recomendada}")
+        
+        if self.direccion not in ['long', 'short']:
+            raise ValueError(f"direccion debe ser 'long' o 'short', recibido: {self.direccion}")
+        
+        if self.apalancamiento_optimo not in ['x3', 'x5', 'x10', 'x20']:
+            raise ValueError(f"apalancamiento_optimo debe ser 'x3', 'x5', 'x10' o 'x20', recibido: {self.apalancamiento_optimo}")
+        
+        if self.riesgo_futuros not in ['low', 'medium', 'high', 'extreme']:
+            raise ValueError(f"riesgo_futuros debe ser 'low', 'medium', 'high' o 'extreme', recibido: {self.riesgo_futuros}")
     
     @classmethod
     def from_trading_opportunity_and_analysis(
@@ -127,8 +149,17 @@ class RecomendacionDiaria:
             
             # Información adicional
             categoria_rendimiento=opportunity.performance_category,
+            categoria=opportunity.performance_category, # Assuming performance_category is the specific category
             condiciones_mercado=opportunity.market_conditions,
             periodo_backtesting_dias=opportunity.backtest_period_days,
+            
+            # Información de direccionalidad y futuros
+            direccion=qualitative_analysis.direction,
+            razon_direccion=qualitative_analysis.direction_reasoning,
+            es_futuros=qualitative_analysis.suitable_for_futures,
+            apalancamiento_optimo=qualitative_analysis.optimal_leverage,
+            riesgo_futuros=qualitative_analysis.futures_risk_level,
+            recomendacion_futuros=qualitative_analysis.futures_recommendation,
             
             # Metadatos
             creado_en=datetime.now(),
@@ -181,6 +212,7 @@ class RecomendacionDiaria:
             'score_final': f"{self.score_final:.1f}/100",
             'score_confianza_gemini': f"{self.score_confianza_gemini:.1f}/100",
             'categoria_rendimiento': self.categoria_rendimiento,
+            'categoria': self.categoria,
             'nivel_riesgo': self.nivel_riesgo,
             'recomendacion_final': self.recomendacion_final
         }
@@ -197,6 +229,7 @@ class RecomendacionDiaria:
             'win_rate': f"{self.win_rate_porcentaje:.1f}%",
             'nivel_riesgo': self.nivel_riesgo,
             'categoria': self.categoria_rendimiento,
+            'categoria_especifica': self.categoria,
             'razon_gemini': self.razon_gemini,
             'fortalezas': self.fortalezas_gemini,
             'riesgos': self.riesgos_gemini,
@@ -226,8 +259,19 @@ class RecomendacionDiaria:
             'consenso_estrategia': self.consenso_estrategia,
             'diferencia_scores': Decimal(str(self.diferencia_scores)) if self.diferencia_scores else None,
             'categoria_rendimiento': self.categoria_rendimiento,
+            'categoria': self.categoria,
             'condiciones_mercado': self.condiciones_mercado,
             'periodo_backtesting_dias': self.periodo_backtesting_dias,
+            
+            # Campos específicos para futuros y direccionalidad
+            'direccion': self.direccion,
+            'razon_direccion': self.razon_direccion,
+            'es_futuros': self.es_futuros,
+            'apalancamiento_optimo': self.apalancamiento_optimo,
+            'riesgo_futuros': self.riesgo_futuros,
+            'recomendacion_futuros': self.recomendacion_futuros,
+            'es_semanal': self.es_semanal,
+            
             'creado_en': self.creado_en,
             'version_pipeline': self.version_pipeline
         } 

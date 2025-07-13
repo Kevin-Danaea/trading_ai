@@ -61,8 +61,8 @@ class TradingAIApplication:
     def _load_configuration(self):
         """Carga la configuración de infraestructura."""
         try:
-            from app.infrastructure.config.settings import settings
-            self.settings = settings
+            from app.infrastructure.config.settings import Settings
+            self.settings = Settings()
             logger.info("📋 Configuración cargada")
         except Exception as e:
             logger.error(f"❌ Error cargando configuración: {e}")
@@ -96,6 +96,8 @@ class TradingAIApplication:
             # Importar servicios reales
             from app.application.use_cases.scanning.crypto_scanner_service import CryptoScannerService
             from app.application.use_cases.optimization.bayesian_optimizer_service import BayesianOptimizerService
+            from app.application.use_cases.qualitative_analysis.qualitative_filter_service import QualitativeFilterService
+            from app.application.use_cases.orchestration.daily_recommendation_service import WeeklyRecommendationService
             
             # Inicializar servicios reales con inyección de dependencias
             self.scanner_service = CryptoScannerService(
@@ -107,6 +109,9 @@ class TradingAIApplication:
                 backtesting_service=self.backtesting_service,
                 data_service=self.data_service
             )
+            
+            self.qualitative_service = QualitativeFilterService()
+            self.weekly_service = WeeklyRecommendationService()
             
             logger.info("📊 Servicios de aplicación inicializados ✅")
         except Exception as e:
@@ -143,30 +148,84 @@ class TradingAIApplication:
             n_trials: Número de trials por símbolo
             
         Returns:
-            Resultados de optimización
+            Resultados de optimización con formato estandarizado
         """
         logger.info(f"🧠 Ejecutando optimización bayesiana para {len(symbols)} símbolos...")
         
         try:
             if self.optimizer_service:
-                results = self.optimizer_service.optimize_portfolio(
+                raw_results = self.optimizer_service.optimize_portfolio(
                     symbols=symbols,
                     n_trials_per_symbol=n_trials
                 )
+                
+                # Convertir a formato estandarizado
+                formatted_results = self._format_optimization_results(raw_results)
+                
                 logger.info("✅ Optimización completada")
-                return results
+                return {
+                    'success': True,
+                    'results': formatted_results,
+                    'symbols_processed': len(symbols),
+                    'total_optimizations': sum(len(r) for r in raw_results.values())
+                }
             else:
                 logger.warning("⚠️ Optimizer service no disponible (modo mock)")
-                return {}
+                return {'success': False, 'error': 'Optimizer service not available'}
         except Exception as e:
             logger.error(f"❌ Error en optimización: {e}")
-            return {}
+            return {'success': False, 'error': str(e)}
+    
+    def _format_optimization_results(self, raw_results: Dict[str, List[Any]]) -> Dict[str, Dict[str, Any]]:
+        """
+        Convierte los resultados de optimización a formato estandarizado.
+        
+        Args:
+            raw_results: Resultados raw del optimizer service
+            
+        Returns:
+            Resultados formateados
+        """
+        formatted = {}
+        
+        for symbol, optimization_results in raw_results.items():
+            formatted[symbol] = {}
+            
+            for opt_result in optimization_results:
+                strategy_name = opt_result.strategy
+                
+                # Considerar exitosa si tiene best_value > 0 y best_params (independientemente de trials_completed)
+                is_successful = (opt_result.best_value > 0 and 
+                               bool(opt_result.best_params) and
+                               opt_result.get_roi() > 0)
+                
+                if is_successful:
+                    formatted[symbol][strategy_name] = {
+                        'success': True,
+                        'roi': opt_result.get_roi(),
+                        'sharpe_ratio': opt_result.get_sharpe_ratio(),
+                        'max_drawdown': opt_result.get_max_drawdown(),
+                        'win_rate': opt_result.get_win_rate(),
+                        'total_trades': getattr(opt_result, 'best_trial', {}).get('user_attrs', {}).get('total_trades', 0),
+                        'best_params': opt_result.best_params,
+                        'score': opt_result.best_value,
+                        'iterations': opt_result.trials_completed,
+                        'duration': opt_result.optimization_time,
+                        'confidence': 0.8  # Valor por defecto
+                    }
+                else:
+                    formatted[symbol][strategy_name] = {
+                        'success': False,
+                        'error': f'Optimization failed: value={opt_result.best_value}, roi={opt_result.get_roi()}'
+                    }
+        
+        return formatted
     
     def run_full_analysis(self, 
                          force_symbols: Optional[List[str]] = None,
                          n_trials: int = 150) -> Dict[str, Any]:
         """
-        Ejecuta análisis completo: Scanner + Optimización.
+        Ejecuta análisis completo: Scanner + Optimización + Análisis Cualitativo + Selección Semanal + Notificaciones.
         
         Args:
             force_symbols: Símbolos específicos (omite scanner si se proporciona)
@@ -175,7 +234,7 @@ class TradingAIApplication:
         Returns:
             Resultados completos del análisis
         """
-        logger.info("🚀 Ejecutando análisis completo...")
+        logger.info("🚀 Ejecutando análisis completo del pipeline...")
         start_time = datetime.now()
         
         try:
@@ -193,9 +252,26 @@ class TradingAIApplication:
                 logger.info(f"🎯 Símbolos seleccionados por scanner: {symbols}")
             
             # Fase 2: Optimización bayesiana
+            logger.info("📊 Iniciando optimización bayesiana...")
             optimization_results = self.run_optimization_only(symbols, n_trials)
             
-            # Fase 3: Resultados finales
+            if not optimization_results.get('success'):
+                logger.error("❌ Error en optimización bayesiana")
+                return {'success': False, 'error': 'Optimization failed'}
+            
+            # Fase 3: Análisis cualitativo
+            logger.info("🧠 Iniciando análisis cualitativo...")
+            qualitative_results = self._run_qualitative_analysis(optimization_results)
+            
+            if not qualitative_results:
+                logger.error("❌ No se obtuvieron resultados del análisis cualitativo")
+                return {'success': False, 'error': 'Qualitative analysis failed'}
+            
+            # Fase 4: Selección de cartera semanal
+            logger.info("🎯 Iniciando selección de cartera semanal...")
+            weekly_results = self._run_weekly_selection(qualitative_results)
+            
+            # Fase 5: Resultados finales
             end_time = datetime.now()
             total_time = (end_time - start_time).total_seconds()
             
@@ -204,17 +280,185 @@ class TradingAIApplication:
                 'symbols_analyzed': symbols,
                 'total_symbols': len(symbols),
                 'optimization_results': optimization_results,
+                'qualitative_results': len(qualitative_results),
+                'weekly_results': weekly_results,
                 'total_time_seconds': total_time,
                 'start_time': start_time.isoformat(),
                 'end_time': end_time.isoformat()
             }
             
-            logger.info(f"✅ Análisis completo terminado en {total_time:.1f} segundos")
+            logger.info(f"✅ Pipeline completo terminado en {total_time:.1f} segundos")
+            logger.info(f"📈 Recomendaciones semanales generadas: {weekly_results.get('total_recommendations', 0)}")
+            
             return results
             
         except Exception as e:
-            logger.error(f"❌ Error en análisis completo: {e}")
+            logger.error(f"❌ Error en pipeline completo: {e}")
             return {'success': False, 'error': str(e)}
+    
+    def _run_qualitative_analysis(self, optimization_results: Dict[str, Any]) -> List[Any]:
+        """
+        Ejecuta análisis cualitativo sobre los resultados de optimización.
+        
+        Args:
+            optimization_results: Resultados de la optimización bayesiana
+            
+        Returns:
+            Lista de resultados cualitativos
+        """
+        try:
+            from app.application.use_cases.qualitative_analysis.qualitative_filter_service import QualitativeFilterService
+            
+            # Obtener las mejores oportunidades de los resultados de optimización
+            opportunities = self._extract_opportunities_from_optimization(optimization_results)
+            
+            if not opportunities:
+                logger.warning("⚠️ No se encontraron oportunidades para análisis cualitativo")
+                return []
+            
+            # Ejecutar análisis cualitativo
+            qualitative_service = QualitativeFilterService()
+            qualitative_results = qualitative_service.analyze_opportunities(opportunities)
+            
+            logger.info(f"🧠 Análisis cualitativo completado: {len(qualitative_results)} resultados")
+            return qualitative_results
+            
+        except Exception as e:
+            logger.error(f"❌ Error en análisis cualitativo: {e}")
+            return []
+    
+    def _run_weekly_selection(self, qualitative_results: List[Any]) -> Dict[str, Any]:
+        """
+        Ejecuta selección de cartera semanal y notificaciones.
+        
+        Args:
+            qualitative_results: Resultados del análisis cualitativo
+            
+        Returns:
+            Resultados de la selección semanal
+        """
+        try:
+            from app.application.use_cases.orchestration.daily_recommendation_service import WeeklyRecommendationService
+            
+            # Ejecutar selección semanal completa
+            weekly_service = WeeklyRecommendationService()
+            weekly_results = weekly_service.process_weekly_recommendations(
+                qualitative_results=qualitative_results,
+                version_pipeline="weekly_v1.0"
+            )
+            
+            logger.info(f"🎯 Selección semanal completada: {weekly_results.get('success', False)}")
+            return weekly_results
+            
+        except Exception as e:
+            logger.error(f"❌ Error en selección semanal: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    def _extract_opportunities_from_optimization(self, optimization_results: Dict[str, Any]) -> List[Any]:
+        """
+        Extrae oportunidades de trading de los resultados de optimización.
+        
+        Args:
+            optimization_results: Resultados de optimización bayesiana
+            
+        Returns:
+            Lista de oportunidades de trading
+        """
+        try:
+            from app.domain.entities.trading_opportunity import TradingOpportunity, StrategyResult
+            from app.domain.entities.crypto_candidate import CryptoCandidate
+            from datetime import datetime
+            
+            opportunities = []
+            
+            # Extraer datos de optimización
+            optimization_data = optimization_results.get('results', {})
+            
+            logger.info(f"🔍 Datos de optimización disponibles: {list(optimization_data.keys())}")
+            for symbol, strategies in optimization_data.items():
+                logger.info(f"📊 {symbol}: {list(strategies.keys())}")
+            
+            for symbol, symbol_data in optimization_data.items():
+                logger.info(f"🔍 Procesando símbolo: {symbol}")
+                
+                # Agrupar estrategias por símbolo
+                strategy_results = {}
+                best_strategy = None
+                best_roi = -999
+                
+                for strategy_name, strategy_data in symbol_data.items():
+                    logger.info(f"📊 Estrategia {strategy_name}: success={strategy_data.get('success')}, roi={strategy_data.get('roi', 0)}")
+                    if strategy_data.get('success') and strategy_data.get('roi', 0) > 0:
+                        # Crear resultado de estrategia
+                        strategy_result = StrategyResult(
+                            strategy_name=strategy_name,
+                            optimized_params=strategy_data.get('best_params', {}),
+                            roi_percentage=strategy_data.get('roi', 0),
+                            sharpe_ratio=strategy_data.get('sharpe_ratio', 0),
+                            max_drawdown_percentage=abs(strategy_data.get('max_drawdown', 0)),
+                            win_rate_percentage=strategy_data.get('win_rate', 0),
+                            total_trades=strategy_data.get('total_trades', 0),
+                            avg_trade_percentage=strategy_data.get('avg_trade', 0),
+                            volatility_percentage=strategy_data.get('volatility', 0),
+                            calmar_ratio=strategy_data.get('calmar_ratio', 0),
+                            sortino_ratio=strategy_data.get('sortino_ratio', 0),
+                            exposure_time_percentage=strategy_data.get('exposure_time', 100),
+                            optimization_iterations=strategy_data.get('iterations', 50),
+                            optimization_duration_seconds=strategy_data.get('duration', 60),
+                            confidence_level=strategy_data.get('confidence', 0.7)
+                        )
+                        
+                        strategy_results[strategy_name] = strategy_result
+                        
+                        # Encontrar mejor estrategia
+                        if strategy_data.get('roi', 0) > best_roi:
+                            best_roi = strategy_data.get('roi', 0)
+                            best_strategy = strategy_name
+                
+                # Solo crear oportunidad si hay al menos una estrategia exitosa
+                if strategy_results and best_strategy:
+                    # Crear candidato con valores por defecto
+                    candidate = CryptoCandidate(
+                        symbol=symbol,
+                        market_cap_rank=100,  # Valor por defecto
+                        current_price=1.0,  # Valor por defecto
+                        volatility_24h=0.15,  # Valor por defecto
+                        volatility_7d=0.20,  # Valor por defecto
+                        adx=20.0,  # Valor por defecto
+                        sentiment_score=0.5,  # Valor por defecto
+                        sentiment_ma7=0.5,  # Valor por defecto
+                        volume_24h=1000000,  # Valor por defecto
+                        volume_change_24h=0.0,  # Valor por defecto
+                        price_change_24h=0.0,  # Valor por defecto
+                        price_change_7d=0.0,  # Valor por defecto
+                        score=best_roi,  # Usar ROI como score
+                        reasons=[f"Optimizado con ROI: {best_roi:.1f}%"]
+                    )
+                    
+                    # Crear oportunidad
+                    opportunity = TradingOpportunity(
+                        candidate=candidate,
+                        strategy_results=strategy_results,
+                        recommended_strategy_name=best_strategy,
+                        backtest_period_days=270,  # ~9 meses
+                        final_score=min(100, max(0, best_roi * 2)),  # Escalar ROI a 0-100
+                        risk_adjusted_score=min(100, max(0, best_roi * 1.5)),  # Algo más conservador
+                        created_at=datetime.now(),
+                        market_conditions="sideways"  # Valor por defecto
+                    )
+                    
+                    opportunities.append(opportunity)
+            
+            # Ordenar por ROI y tomar las mejores
+            opportunities.sort(key=lambda x: x.roi_percentage, reverse=True)
+            top_opportunities = opportunities[:5]  # Top 5 para análisis cualitativo
+            
+            logger.info(f"📊 Extraídas {len(top_opportunities)} oportunidades de {len(opportunities)} totales")
+            return top_opportunities
+            
+        except Exception as e:
+            logger.error(f"❌ Error extrayendo oportunidades: {e}")
+            return []
     
     def get_system_status(self) -> Dict[str, Any]:
         """

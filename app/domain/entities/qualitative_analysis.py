@@ -32,6 +32,15 @@ class QualitativeAnalysis:
     recommended_strategy: str  # 'grid', 'dca', 'btd'
     strategy_reasoning: str  # Por qué esta estrategia es la mejor
     alternative_strategies_notes: str  # Por qué las otras no son tan buenas
+    direction: str  # 'long', 'short'
+    direction_reasoning: str  # Por qué LONG o SHORT
+    
+    # Análisis de futuros
+    suitable_for_futures: bool  # Si es apto para futuros
+    futures_recommendation: str  # Recomendación para futuros esta semana
+    optimal_leverage: str  # 'x3', 'x5', 'x10', 'x20'
+    futures_risk_level: str  # 'low', 'medium', 'high', 'extreme'
+    futures_timing: str  # Análisis de timing para futuros
     
     # Recomendaciones estratégicas
     strategic_notes: str  # Notas estratégicas específicas
@@ -55,6 +64,18 @@ class QualitativeAnalysis:
         valid_strategies = ['grid', 'dca', 'btd']
         if self.recommended_strategy.lower() not in valid_strategies:
             raise ValueError(f"recommended_strategy debe ser uno de {valid_strategies}")
+        
+        valid_directions = ['long', 'short']
+        if self.direction.lower() not in valid_directions:
+            raise ValueError(f"direction debe ser uno de {valid_directions}")
+        
+        valid_leverages = ['x3', 'x5', 'x10', 'x20']
+        if self.optimal_leverage.lower() not in valid_leverages:
+            raise ValueError(f"optimal_leverage debe ser uno de {valid_leverages}")
+        
+        valid_futures_risk_levels = ['low', 'medium', 'high', 'extreme']
+        if self.futures_risk_level.lower() not in valid_futures_risk_levels:
+            raise ValueError(f"futures_risk_level debe ser uno de {valid_futures_risk_levels}")
     
     @property
     def risk_score(self) -> float:

@@ -136,6 +136,7 @@ class QualitativeFilterService:
                 
                 # Extraer análisis de estrategia
                 strategy_analysis = normalized_data.get('strategy_analysis', {})
+                futures_analysis = normalized_data.get('futures_analysis', {})
                 
                 return QualitativeAnalysis(
                     reasoning=normalized_data.get('reasoning', ''),
@@ -145,6 +146,13 @@ class QualitativeFilterService:
                     recommended_strategy=strategy_analysis.get('recommended_strategy', 'grid'),
                     strategy_reasoning=strategy_analysis.get('strategy_reasoning', 'Análisis no disponible'),
                     alternative_strategies_notes=strategy_analysis.get('alternative_strategies', 'No especificado'),
+                    direction=strategy_analysis.get('direction', 'long'),
+                    direction_reasoning=strategy_analysis.get('direction_reasoning', 'Análisis de dirección no especificado'),
+                    suitable_for_futures=futures_analysis.get('suitable_for_futures', False),
+                    futures_recommendation=futures_analysis.get('futures_recommendation', 'Análisis de futuros no especificado'),
+                    optimal_leverage=futures_analysis.get('optimal_leverage', 'x3'),
+                    futures_risk_level=futures_analysis.get('futures_risk_level', 'medium'),
+                    futures_timing=futures_analysis.get('futures_timing', 'Timing de futuros no especificado'),
                     strategic_notes=normalized_data.get('strategic_notes', ''),
                     confidence_level=normalized_data.get('confidence_level', 'medium'),
                     recommendation=normalized_data.get('recommendation', 'hold'),
@@ -238,10 +246,93 @@ class QualitativeFilterService:
                     strategy_analysis['recommended_strategy'] = strategy_mapping.get(strategy, 'grid')
                 else:
                     strategy_analysis['recommended_strategy'] = 'grid'
+                
+                # Normalizar direction
+                direction = strategy_analysis.get('direction', 'long')
+                if isinstance(direction, str):
+                    direction = direction.lower().strip()
+                    direction_mapping = {
+                        'long': 'long',
+                        'largo': 'long',
+                        'compra': 'long',
+                        'short': 'short',
+                        'corto': 'short',
+                        'venta': 'short'
+                    }
+                    strategy_analysis['direction'] = direction_mapping.get(direction, 'long')
+                else:
+                    strategy_analysis['direction'] = 'long'
+                
+                # Asegurar direction_reasoning
+                if 'direction_reasoning' not in strategy_analysis:
+                    strategy_analysis['direction_reasoning'] = 'Análisis de dirección no especificado'
             else:
-                strategy_analysis = {'recommended_strategy': 'grid'}
+                strategy_analysis = {
+                    'recommended_strategy': 'grid',
+                    'direction': 'long',
+                    'direction_reasoning': 'Análisis de dirección no especificado'
+                }
             
             normalized['strategy_analysis'] = strategy_analysis
+            
+            # Normalizar futures_analysis
+            futures_analysis = analysis_data.get('futures_analysis', {})
+            if isinstance(futures_analysis, dict):
+                # Normalizar suitable_for_futures
+                suitable = futures_analysis.get('suitable_for_futures', False)
+                if isinstance(suitable, str):
+                    suitable = suitable.lower().strip() in ['true', 'yes', 'sí', '1']
+                futures_analysis['suitable_for_futures'] = bool(suitable)
+                
+                # Normalizar optimal_leverage
+                leverage = futures_analysis.get('optimal_leverage', 'x3')
+                if isinstance(leverage, str):
+                    leverage = leverage.lower().strip()
+                    if not leverage.startswith('x'):
+                        leverage = f"x{leverage}"
+                    leverage_mapping = {
+                        'x3': 'x3',
+                        'x5': 'x5',
+                        'x10': 'x10',
+                        'x20': 'x20'
+                    }
+                    futures_analysis['optimal_leverage'] = leverage_mapping.get(leverage, 'x3')
+                else:
+                    futures_analysis['optimal_leverage'] = 'x3'
+                
+                # Normalizar futures_risk_level
+                risk_level = futures_analysis.get('futures_risk_level', 'medium')
+                if isinstance(risk_level, str):
+                    risk_level = risk_level.lower().strip()
+                    risk_mapping = {
+                        'low': 'low',
+                        'bajo': 'low',
+                        'medium': 'medium',
+                        'medio': 'medium',
+                        'high': 'high',
+                        'alto': 'high',
+                        'extreme': 'extreme',
+                        'extremo': 'extreme'
+                    }
+                    futures_analysis['futures_risk_level'] = risk_mapping.get(risk_level, 'medium')
+                else:
+                    futures_analysis['futures_risk_level'] = 'medium'
+                
+                # Asegurar campos obligatorios
+                if 'futures_recommendation' not in futures_analysis:
+                    futures_analysis['futures_recommendation'] = 'Análisis de futuros no especificado'
+                if 'futures_timing' not in futures_analysis:
+                    futures_analysis['futures_timing'] = 'Timing de futuros no especificado'
+            else:
+                futures_analysis = {
+                    'suitable_for_futures': False,
+                    'futures_recommendation': 'Análisis de futuros no especificado',
+                    'optimal_leverage': 'x3',
+                    'futures_risk_level': 'medium',
+                    'futures_timing': 'Timing de futuros no especificado'
+                }
+            
+            normalized['futures_analysis'] = futures_analysis
             
             # Asegurar que las listas sean listas
             if not isinstance(normalized.get('risk_factors'), list):
@@ -259,7 +350,18 @@ class QualitativeFilterService:
             return {
                 'recommendation': 'hold',
                 'confidence_level': 'medium',
-                'strategy_analysis': {'recommended_strategy': 'grid'},
+                'strategy_analysis': {
+                    'recommended_strategy': 'grid',
+                    'direction': 'long',
+                    'direction_reasoning': 'Análisis de dirección no especificado'
+                },
+                'futures_analysis': {
+                    'suitable_for_futures': False,
+                    'futures_recommendation': 'Análisis de futuros no especificado',
+                    'optimal_leverage': 'x3',
+                    'futures_risk_level': 'medium',
+                    'futures_timing': 'Timing de futuros no especificado'
+                },
                 'risk_factors': [],
                 'opportunity_factors': [],
                 'reasoning': analysis_data.get('reasoning', 'Error en normalización'),
@@ -283,6 +385,25 @@ class QualitativeFilterService:
         candidate = opportunity.candidate
         all_strategies = opportunity.get_all_strategies_comparison()
         strategy_ranking = opportunity.get_strategy_ranking()
+        
+        # Determinar si es candidato para futuros
+        is_futures_suitable = (
+            hasattr(candidate, 'is_suitable_for_futures') and
+            candidate.is_suitable_for_futures()
+        )
+        
+        futures_analysis = ""
+        if is_futures_suitable:
+            futures_analysis = f"""
+### 🚀 ANÁLISIS PARA FUTUROS (APALANCAMIENTO)
+- **Volumen Futuros 24h**: ${getattr(candidate, 'futures_volume_24h', 0):,.0f}
+- **Funding Rate**: {getattr(candidate, 'funding_rate', 0)*100:.3f}%
+- **Open Interest**: ${getattr(candidate, 'open_interest', 0):,.0f}
+- **Apalancamiento Recomendado**: x{getattr(candidate, 'get_optimal_leverage_for_futures', lambda: 3)()}
+- **Nivel de Riesgo Futuros**: {getattr(candidate, 'get_futures_risk_level', lambda: 'medium')()}
+
+**IMPORTANTE**: Este activo es APTO para futuros. Analiza si es recomendable operar futuros ESTA SEMANA.
+"""
         
         prompt = f"""
 # 🎯 ANÁLISIS ESTRATÉGICO DE OPORTUNIDAD DE TRADING
@@ -310,6 +431,8 @@ Eres un **Jefe de Estrategia** experto en trading de criptomonedas con 15 años 
 - **Cambio 24h**: {candidate.price_change_24h:.2f}%
 - **Sentimiento**: {candidate.sentiment_score:.2f}
 
+{futures_analysis}
+
 ---
 
 ## 🧠 TU MISIÓN: ANÁLISIS CUALITATIVO Y SELECCIÓN DE ESTRATEGIA
@@ -323,11 +446,12 @@ Aplica tu experiencia y sentido común para evaluar esta oportunidad. **IMPORTAN
 3. **Riesgo vs Recompensa**: ¿Los números tienen sentido estratégico?
 4. **Timing**: ¿Es buen momento para esta estrategia y criptomoneda?
 5. **Factores Cualitativos**: ¿Qué no capturan los números?
+6. **Análisis de Futuros**: {'Si es apto para futuros, ¿recomiendas operar futuros ESTA SEMANA?' if is_futures_suitable else 'No apto para futuros.'}
 
 ### Características de cada estrategia:
 - **GRID TRADING**: Ideal para mercados laterales con volatilidad controlada
-- **DCA**: Mejor para tendencias alcistas sostenidas o mercados inciertos
-- **BTD**: Óptimo para aprovechar dips en activos con fundamentos sólidos
+- **DCA**: Mejor para tendencias alcistas sostenidas o mercados inciertos (LONG)
+- **BTD**: Óptimo para aprovechar dips en activos con fundamentos sólidos (LONG)
 
 **RESPONDE EN FORMATO JSON EXACTO:**
 
@@ -338,7 +462,16 @@ Aplica tu experiencia y sentido común para evaluar esta oportunidad. **IMPORTAN
   "strategy_analysis": {{
     "recommended_strategy": "dca/btd/grid",
     "strategy_reasoning": "Por qué esta estrategia es la mejor para esta criptomoneda",
-    "alternative_strategies": "Breve comentario sobre por qué las otras 2 estrategias son menos adecuadas"
+    "alternative_strategies": "Breve comentario sobre por qué las otras 2 estrategias son menos adecuadas",
+    "direction": "long/short",
+    "direction_reasoning": "Por qué recomiendas LONG o SHORT para esta estrategia"
+  }},
+  "futures_analysis": {{
+    "suitable_for_futures": true/false,
+    "futures_recommendation": "Si es apto para futuros, ¿recomiendas operar futuros ESTA SEMANA?",
+    "optimal_leverage": "x3/x5/x10/x20",
+    "futures_risk_level": "low/medium/high/extreme",
+    "futures_timing": "Esta semana es buen momento para futuros? Por qué sí/no"
   }},
   "risk_factors": ["Factor de riesgo 1", "Factor de riesgo 2"],
   "opportunity_factors": ["Factor positivo 1", "Factor positivo 2"],
@@ -352,8 +485,12 @@ Aplica tu experiencia y sentido común para evaluar esta oportunidad. **IMPORTAN
 **FORMATO OBLIGATORIO - NO CAMBIES LOS NOMBRES DE CAMPOS:**
 
 - **recommended_strategy**: DEBE ser exactamente "grid", "dca", o "btd" (sin espacios, sin mayúsculas)
+- **direction**: DEBE ser exactamente "long" o "short" (sin mayúsculas)
 - **confidence_level**: DEBE ser exactamente "high", "medium", o "low" (sin mayúsculas)
 - **recommendation**: DEBE ser exactamente "buy", "hold", o "avoid" (sin mayúsculas)
+- **suitable_for_futures**: DEBE ser exactamente true o false (boolean)
+- **optimal_leverage**: DEBE ser exactamente "x3", "x5", "x10", o "x20"
+- **futures_risk_level**: DEBE ser exactamente "low", "medium", "high", o "extreme"
 
 **CRITERIOS DE EVALUACIÓN:**
 - ✅ **buy**: Oportunidad excelente con riesgo controlado y estrategia clara

@@ -164,12 +164,18 @@ class TelegramService:
                 'NEUTRAL': '😐'
             }
             
+            # Determinar direccionalidad
+            direction_info = self._get_direction_info(recommendation)
+            
+            # Determinar si es futuros
+            is_futures = getattr(recommendation, 'es_futuros', False)
+            
             # Construir mensaje
             message = f"""
-🤖 *RECOMENDACIÓN DIARIA DE TRADING*
+🤖 *RECOMENDACIÓN SEMANAL DE TRADING*
 
 💎 *{telegram_data['simbolo']}*
-{strategy_emoji.get(recommendation.estrategia_recomendada, '📊')} *Estrategia:* {telegram_data['estrategia_final']}
+{strategy_emoji.get(recommendation.estrategia_recomendada, '📊')} *Estrategia:* {telegram_data['estrategia_final']} {direction_info['emoji']} {direction_info['text']}
 {telegram_data['consenso']}
 
 {recomendacion_emoji.get(telegram_data['recomendacion'], '👍')} *Recomendación:* {telegram_data['recomendacion']}
@@ -193,6 +199,11 @@ class TelegramService:
 ⚙️ *PARÁMETROS OPTIMIZADOS*
 {self._format_parameters(telegram_data['parametros'])}
 
+💰 *RECOMENDACIONES DE CAPITAL*
+{self._format_capital_recommendations(is_futures)}
+
+{self._format_futures_info(recommendation) if is_futures else ''}
+
 ───────────────────────
 📅 {recommendation.fecha.strftime('%Y-%m-%d %H:%M')}
 """
@@ -203,6 +214,79 @@ class TelegramService:
             logger.error(f"❌ Error formateando mensaje: {e}")
             return f"❌ Error formateando recomendación para {recommendation.simbolo}"
     
+    def _get_direction_info(self, recommendation: RecomendacionDiaria) -> Dict[str, str]:
+        """
+        Obtiene información de direccionalidad de la estrategia.
+        
+        Args:
+            recommendation: Recomendación
+            
+        Returns:
+            Diccionario con emoji y texto de dirección
+        """
+        # Obtener dirección del análisis cualitativo si está disponible
+        direction = getattr(recommendation, 'direccion', 'long')
+        
+        if direction.lower() == 'short':
+            return {
+                'emoji': '📉',
+                'text': '(SHORT)'
+            }
+        else:
+            return {
+                'emoji': '📈',
+                'text': '(LONG)'
+            }
+    
+    def _format_capital_recommendations(self, is_futures: bool) -> str:
+        """
+        Formatea las recomendaciones de capital.
+        
+        Args:
+            is_futures: Si es para futuros o spot
+            
+        Returns:
+            Texto formateado con recomendaciones de capital
+        """
+        if is_futures:
+            return """• 💸 *Bajo Capital:* $50-100 (x3-x5)
+• 💰 *Medio Capital:* $200-500 (x3-x5)  
+• 🏦 *Alto Capital:* $1000+ (x3-x5)
+• ⚡ *Recomendado:* Capital medio con x3-x5"""
+        else:
+            return """• 💸 *Bajo Capital:* $50-200
+• 💰 *Medio Capital:* $500-1500
+• 🏦 *Alto Capital:* $2000+
+• ⚡ *Recomendado:* Capital medio $500-1000"""
+    
+    def _format_futures_info(self, recommendation: RecomendacionDiaria) -> str:
+        """
+        Formatea información específica de futuros.
+        
+        Args:
+            recommendation: Recomendación
+            
+        Returns:
+            Texto formateado con información de futuros
+        """
+        # Obtener información de futuros del análisis cualitativo
+        optimal_leverage = getattr(recommendation, 'apalancamiento_optimo', 'x3')
+        futures_risk = getattr(recommendation, 'riesgo_futuros', 'medium')
+        
+        risk_emoji = {
+            'low': '🟢',
+            'medium': '🟡',
+            'high': '🔴',
+            'extreme': '⚫'
+        }
+        
+        return f"""
+🚀 *INFORMACIÓN DE FUTUROS*
+• 📊 *Apalancamiento Óptimo:* {optimal_leverage}
+• ⚠️ *Riesgo Futuros:* {risk_emoji.get(futures_risk, '🟡')} {futures_risk.upper()}
+• 🎯 *Recomendación:* Usar stop loss estricto
+• ⏰ *Timeframe:* Monitoreo activo requerido"""
+
     def _escape_markdown_v2(self, text: str) -> str:
         """Escapa caracteres especiales para Markdown V2."""
         escape_chars = '_*[]()~`>#+-=|{}.!'
@@ -440,6 +524,253 @@ class TelegramService:
                     time.sleep(sleep_time)
         
         return False
+    
+    def send_weekly_report(self, recommendations: List[RecomendacionDiaria], weekly_selection=None) -> Dict[str, Any]:
+        """
+        Envía el reporte semanal completo a Telegram con formato especializado.
+        
+        Args:
+            recommendations: Lista de recomendaciones semanales
+            weekly_selection: Selección semanal (opcional)
+            
+        Returns:
+            Diccionario con estadísticas del envío
+        """
+        try:
+            if not recommendations:
+                logger.warning("⚠️ No hay recomendaciones semanales para enviar")
+                return {
+                    'total_messages': 0,
+                    'sent_successfully': 0,
+                    'errors': 0,
+                    'success_rate': 0
+                }
+            
+            if not self.bot or not self.chat_id:
+                logger.error("❌ Bot de Telegram no está configurado")
+                return {
+                    'total_messages': 0,
+                    'sent_successfully': 0,
+                    'errors': 1,
+                    'success_rate': 0
+                }
+            
+            logger.info(f"🚀 Iniciando envío de reporte semanal con {len(recommendations)} recomendaciones")
+            
+            sent_successfully = 0
+            errors = 0
+            
+            # 1. Enviar resumen semanal
+            logger.info("📊 Enviando resumen semanal...")
+            weekly_summary = self.format_weekly_summary(recommendations, weekly_selection)
+            if self._send_with_retry(weekly_summary, max_retries=5):
+                sent_successfully += 1
+                logger.info("✅ Resumen semanal enviado exitosamente")
+            else:
+                errors += 1
+                logger.error("❌ Error enviando resumen semanal después de 5 intentos")
+            
+            # Pausa después del resumen
+            time.sleep(1)
+            
+            # 2. Enviar cada recomendación con categoría
+            for i, recommendation in enumerate(recommendations, 1):
+                logger.info(f"📱 Enviando recomendación semanal {i}/{len(recommendations)}: {recommendation.simbolo}")
+                
+                try:
+                    message = self.format_weekly_recommendation_message(recommendation)
+                    
+                    if self._send_with_retry(message, max_retries=5):
+                        sent_successfully += 1
+                        logger.info(f"✅ Recomendación semanal {i} enviada exitosamente")
+                    else:
+                        errors += 1
+                        logger.error(f"❌ Error enviando recomendación semanal {i} después de 5 intentos")
+                    
+                    # Pausa entre mensajes
+                    time.sleep(0.8)
+                    
+                except Exception as e:
+                    errors += 1
+                    logger.error(f"❌ Error procesando recomendación semanal {i}: {e}")
+                    continue
+            
+            total_messages = len(recommendations) + 1  # +1 por el resumen
+            success_rate = (sent_successfully / total_messages) * 100 if total_messages > 0 else 0
+            
+            logger.info(f"📊 Reporte semanal Telegram completado: {sent_successfully}/{total_messages} mensajes ({success_rate:.1f}%)")
+            
+            return {
+                'total_messages': total_messages,
+                'sent_successfully': sent_successfully,
+                'errors': errors,
+                'success_rate': success_rate
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Error crítico enviando reporte semanal: {e}")
+            return {
+                'total_messages': 0,
+                'sent_successfully': 0,
+                'errors': 1,
+                'success_rate': 0
+            }
+    
+    def format_weekly_summary(self, recommendations: List[RecomendacionDiaria], weekly_selection=None) -> str:
+        """
+        Formatea el resumen semanal de la cartera.
+        
+        Args:
+            recommendations: Lista de recomendaciones semanales
+            weekly_selection: Selección semanal
+            
+        Returns:
+            Mensaje resumen formateado
+        """
+        try:
+            if not recommendations:
+                return "📊 *CARTERA SEMANAL*\n\nNo hay recomendaciones para esta semana."
+            
+            fecha = recommendations[0].fecha.strftime('%Y-%m-%d')
+            
+            # Categorizar recomendaciones
+            spot_recs = [r for r in recommendations if not r.categoria.endswith('_FUTURES')]
+            futures_recs = [r for r in recommendations if r.categoria.endswith('_FUTURES')]
+            
+            # Estadísticas generales
+            total = len(recommendations)
+            avg_roi = sum(r.roi_porcentaje for r in recommendations) / total if total > 0 else 0
+            avg_confidence = sum(r.score_confianza_gemini for r in recommendations) / total if total > 0 else 0
+            
+            message = f"""
+📊 *CARTERA SEMANAL DE TRADING*
+📅 Semana del {fecha}
+
+🎯 *COMPOSICIÓN DE CARTERA*
+• Total seleccionadas: {total}/5
+• Spot: {len(spot_recs)} recomendaciones
+• Futuros: {len(futures_recs)} recomendaciones
+
+📈 *MÉTRICAS GENERALES*
+• ROI promedio: {avg_roi:.1f}%
+• Confianza promedio: {avg_confidence:.1f}%
+• Período válido: 7 días
+
+🔸 *SPOT TRADING*
+{self._format_spot_summary(spot_recs)}
+
+🔸 *FUTUROS TRADING*
+{self._format_futures_summary(futures_recs)}
+
+⚠️ *RECORDATORIO*
+Esta cartera está diseñada para ejecutarse durante toda la semana. Cada estrategia ha sido validada por análisis cuantitativo y cualitativo (Gemini AI).
+
+🤖 Cartera generada por Trading AI v2.0
+"""
+            
+            return self._escape_markdown_v2(message.strip())
+            
+        except Exception as e:
+            logger.error(f"❌ Error formateando resumen semanal: {e}")
+            return "❌ Error generando resumen semanal"
+    
+    def format_weekly_recommendation_message(self, recommendation: RecomendacionDiaria) -> str:
+        """
+        Formatea una recomendación semanal con categoría específica.
+        
+        Args:
+            recommendation: Recomendación semanal
+            
+        Returns:
+            Mensaje formateado
+        """
+        try:
+            # Emojis por categoría
+            category_emoji = {
+                'GRID_SPOT': '📊',
+                'DCA_SPOT': '📈',
+                'BTD_SPOT': '💰',
+                'GRID_FUTURES': '🎯',
+                'DCA_FUTURES': '🚀'
+            }
+            
+            category_name = {
+                'GRID_SPOT': 'GRID TRADING (SPOT)',
+                'DCA_SPOT': 'DCA TRADING (SPOT)',
+                'BTD_SPOT': 'BUY THE DIP (SPOT)',
+                'GRID_FUTURES': 'GRID TRADING (FUTUROS)',
+                'DCA_FUTURES': 'DCA TRADING (FUTUROS)'
+            }
+            
+            risk_emoji = {
+                'BAJO': '🟢',
+                'MEDIO': '🟡',
+                'ALTO': '🔴'
+            }
+            
+            emoji = category_emoji.get(recommendation.categoria, '📊')
+            cat_name = category_name.get(recommendation.categoria, recommendation.categoria)
+            
+            message = f"""
+🤖 *RECOMENDACIÓN SEMANAL*
+
+{emoji} *{recommendation.simbolo}*
+📋 *Categoría:* {cat_name}
+⏰ *Válida por:* 7 días
+
+📊 *MÉTRICAS DE RENDIMIENTO*
+• ROI: {recommendation.roi_porcentaje:.1f}%
+• Sharpe Ratio: {recommendation.sharpe_ratio:.2f}
+• Win Rate: {recommendation.win_rate_porcentaje:.1f}%
+• Max Drawdown: {recommendation.max_drawdown_porcentaje:.1f}%
+• Riesgo: {risk_emoji.get(recommendation.nivel_riesgo, '🟡')} {recommendation.nivel_riesgo}
+
+🧠 *ANÁLISIS GEMINI AI*
+• {recommendation.razon_gemini}
+
+💪 *FORTALEZAS*
+• {recommendation.fortalezas_gemini}
+
+⚠️ *RIESGOS*
+• {recommendation.riesgos_gemini}
+
+⚙️ *PARÁMETROS OPTIMIZADOS*
+{self._format_parameters(recommendation.parametros_optimizados)}
+
+───────────────────────
+📅 {recommendation.fecha.strftime('%Y-%m-%d %H:%M')}
+🔄 Ejecutar durante toda la semana
+"""
+            
+            return self._escape_markdown_v2(message.strip())
+            
+        except Exception as e:
+            logger.error(f"❌ Error formateando mensaje semanal: {e}")
+            return f"❌ Error formateando recomendación semanal para {recommendation.simbolo}"
+    
+    def _format_spot_summary(self, spot_recs: List[RecomendacionDiaria]) -> str:
+        """Formatea resumen de recomendaciones spot."""
+        if not spot_recs:
+            return "• No hay recomendaciones spot"
+        
+        lines = []
+        for rec in spot_recs:
+            strategy_type = rec.categoria.replace('_SPOT', '')
+            lines.append(f"• {rec.simbolo} ({strategy_type}) - ROI: {rec.roi_porcentaje:.1f}%")
+        
+        return "\n".join(lines)
+    
+    def _format_futures_summary(self, futures_recs: List[RecomendacionDiaria]) -> str:
+        """Formatea resumen de recomendaciones futuros."""
+        if not futures_recs:
+            return "• No hay recomendaciones futuros"
+        
+        lines = []
+        for rec in futures_recs:
+            strategy_type = rec.categoria.replace('_FUTURES', '')
+            lines.append(f"• {rec.simbolo} ({strategy_type}) - ROI: {rec.roi_porcentaje:.1f}%")
+        
+        return "\n".join(lines)
     
     def close(self):
         """

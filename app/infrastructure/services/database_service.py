@@ -94,8 +94,19 @@ class DatabaseService:
                 Column('consenso_estrategia', Boolean, nullable=False),
                 Column('diferencia_scores', Numeric(5, 2), nullable=True),
                 Column('categoria_rendimiento', String(20), nullable=False),
+                Column('categoria', String(30), nullable=False),
                 Column('condiciones_mercado', String(20), nullable=False),
                 Column('periodo_backtesting_dias', Integer, nullable=False),
+                
+                # Campos específicos para futuros y direccionalidad
+                Column('direccion', String(10), nullable=False, default='long'),
+                Column('razon_direccion', String(1000), nullable=False, default=''),
+                Column('es_futuros', Boolean, nullable=False, default=False),
+                Column('apalancamiento_optimo', String(10), nullable=False, default='x3'),
+                Column('riesgo_futuros', String(20), nullable=False, default='medium'),
+                Column('recomendacion_futuros', String(1000), nullable=False, default=''),
+                Column('es_semanal', Boolean, nullable=False, default=False),
+                
                 Column('creado_en', DateTime, nullable=False),
                 Column('version_pipeline', String(10), nullable=False),
                 extend_existing=True
