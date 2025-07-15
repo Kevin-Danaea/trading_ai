@@ -373,3 +373,279 @@ class MarketDataProvider:
             df['sentiment_ma7'] = 0.0
             df['primary_emotion'] = 'neutral'
             return df 
+
+    def fetch_optimization_historical_data(self, symbol: str, months: int = 12) -> Optional[pd.DataFrame]:
+        """
+        Obtiene datos históricos para optimización de estrategias (spot y futuros).
+        
+        Args:
+            symbol: Símbolo (ej: 'BTC/USDT')
+            months: Número de meses de datos históricos (default: 12)
+            
+        Returns:
+            DataFrame con datos OHLCV de los últimos N meses
+        """
+        try:
+            from datetime import datetime, timedelta
+            import time
+            
+            # Calcular fechas (12 meses atrás)
+            end_date = datetime.now()
+            start_date = end_date - timedelta(days=months * 30)  # Aproximadamente 12 meses
+            
+            logger.info(f"📊 Obteniendo datos históricos para optimización de {symbol}")
+            logger.info(f"   📅 Período: {start_date.strftime('%Y-%m-%d')} a {end_date.strftime('%Y-%m-%d')}")
+            logger.info(f"   🎯 Objetivo: Optimizar para trading de hoy y próximos 7 días")
+            
+            # Usar timeframe de 1 día para 12 meses de datos
+            timeframe = '1d'
+            
+            # Obtener datos históricos en chunks (Binance limita a 1000 por llamada)
+            all_data = []
+            current_end = end_date
+            max_limit = 1000  # Límite máximo de Binance
+            max_iterations = 50  # Máximo número de iteraciones para evitar bucles infinitos
+            iteration_count = 0
+            
+            while current_end > start_date and iteration_count < max_iterations:
+                iteration_count += 1
+                try:
+                    # Calcular cuántos días necesitamos en este chunk
+                    days_needed = (current_end - start_date).days
+                    chunk_limit = min(days_needed, max_limit)
+                    
+                    if chunk_limit <= 0:
+                        break
+                    
+                    logger.info(f"   📥 Obteniendo chunk {iteration_count}: {chunk_limit} días hasta {current_end.strftime('%Y-%m-%d')}")
+                    
+                    # Obtener datos para este chunk con timeout
+                    try:
+                        import threading
+                        import queue
+                        
+                        result_queue = queue.Queue()
+                        
+                        def fetch_data():
+                            try:
+                                klines_data = self.exchange.fetch_ohlcv(
+                                    symbol=symbol,
+                                    timeframe=timeframe,
+                                    limit=chunk_limit,
+                                    since=int(current_end.timestamp() * 1000) - (chunk_limit * 24 * 60 * 60 * 1000)
+                                )
+                                result_queue.put(('success', klines_data))
+                            except Exception as e:
+                                result_queue.put(('error', e))
+                        
+                        # Ejecutar en thread separado con timeout
+                        thread = threading.Thread(target=fetch_data)
+                        thread.daemon = True
+                        thread.start()
+                        thread.join(timeout=30)  # 30 segundos timeout
+                        
+                        if thread.is_alive():
+                            logger.warning(f"   ⚠️ Timeout en chunk hasta {current_end.strftime('%Y-%m-%d')}")
+                            # Intentar con un chunk más pequeño
+                            if chunk_limit > 100:
+                                chunk_limit = chunk_limit // 2
+                                # No hacer continue aquí, continuar con el procesamiento
+                            else:
+                                logger.error(f"   ❌ Chunk demasiado pequeño, saltando a siguiente fecha")
+                                # Avanzar la fecha para evitar bucle infinito
+                                current_end = current_end - timedelta(days=chunk_limit)
+                                if current_end <= start_date:
+                                    break
+                                continue
+                        
+                        # Obtener resultado
+                        if not result_queue.empty():
+                            status, result = result_queue.get()
+                            if status == 'success':
+                                klines = result
+                            else:
+                                raise result
+                        else:
+                            raise Exception("No se obtuvo respuesta de la API")
+                        
+                    except Exception as e:
+                        logger.warning(f"   ⚠️ Error en chunk hasta {current_end.strftime('%Y-%m-%d')}: {e}")
+                        # Intentar con un chunk más pequeño
+                        if chunk_limit > 100:
+                            chunk_limit = chunk_limit // 2
+                            # No hacer continue aquí, continuar con el procesamiento
+                        else:
+                            logger.error(f"   ❌ Chunk demasiado pequeño, saltando a siguiente fecha")
+                            # Avanzar la fecha para evitar bucle infinito
+                            current_end = current_end - timedelta(days=chunk_limit)
+                            if current_end <= start_date:
+                                break
+                            continue
+                    
+                    if not klines:
+                        logger.warning(f"   ⚠️ No se obtuvieron datos para chunk hasta {current_end.strftime('%Y-%m-%d')}")
+                        break
+                    
+                    all_data.extend(klines)
+                    
+                    # Actualizar fecha para el siguiente chunk
+                    if klines:
+                        # El primer elemento es el más antiguo
+                        oldest_timestamp = klines[0][0]
+                        current_end = datetime.fromtimestamp(oldest_timestamp / 1000)
+                    else:
+                        break
+                    
+                    # Rate limiting
+                    time.sleep(self.rate_limit_delay)
+                    
+                except Exception as e:
+                    logger.error(f"   ❌ Error obteniendo chunk: {e}")
+                    break
+            
+            if not all_data:
+                logger.error(f"❌ No se pudieron obtener datos históricos para {symbol}")
+                return None
+            
+            # Convertir a DataFrame
+            columns = ['timestamp', 'open', 'high', 'low', 'close', 'volume']
+            df = pd.DataFrame(all_data, columns=pd.Index(columns))
+            
+            # Convertir timestamp a datetime
+            df['datetime'] = pd.to_datetime(df['timestamp'], unit='ms')
+            df = df.set_index('datetime').drop('timestamp', axis=1)
+            
+            # Convertir tipos de datos
+            for col in ['open', 'high', 'low', 'close', 'volume']:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+            
+            # Renombrar columnas para compatibilidad con backtesting
+            df = df.rename(columns={
+                'open': 'Open',
+                'high': 'High', 
+                'low': 'Low',
+                'close': 'Close',
+                'volume': 'Volume'
+            })
+            
+            # Remover duplicados y ordenar por fecha
+            df = df.drop_duplicates().sort_index()
+            
+            # Filtrar por rango de fechas exacto
+            df = df[(df.index >= start_date) & (df.index <= end_date)]
+            
+            if len(df) < 180:  # Mínimo 6 meses de datos
+                logger.warning(f"⚠️ Datos insuficientes para {symbol}: {len(df)} registros")
+                return None
+            
+            # Asegurar que df sea DataFrame
+            if not isinstance(df, pd.DataFrame):
+                df = pd.DataFrame(df)
+            
+            # Agregar columnas específicas para futuros (si es necesario)
+            df = self._add_optimization_data(df, symbol)
+            
+            logger.info(f"✅ Datos históricos obtenidos: {len(df)} registros ({len(df)/30:.1f} meses)")
+            
+            # Verificar que el índice sea datetime antes de usar strftime
+            try:
+                min_date = df.index.min()
+                max_date = df.index.max()
+                if isinstance(min_date, pd.Timestamp) and isinstance(max_date, pd.Timestamp):
+                    logger.info(f"   📅 Rango real: {min_date.strftime('%Y-%m-%d')} a {max_date.strftime('%Y-%m-%d')}")
+                else:
+                    logger.info(f"   📅 Rango: {min_date} a {max_date}")
+            except Exception:
+                logger.info(f"   📅 Rango: {len(df)} registros")
+            
+            return df
+            
+        except Exception as e:
+            logger.error(f"❌ Error obteniendo datos históricos para optimización de {symbol}: {e}")
+            return None
+    
+    def _add_optimization_data(self, df: pd.DataFrame, symbol: str) -> pd.DataFrame:
+        """
+        Agrega datos específicos para optimización (spot y futuros).
+        
+        Args:
+            df: DataFrame con datos OHLCV
+            symbol: Símbolo
+            
+        Returns:
+            DataFrame con datos adicionales para optimización
+        """
+        try:
+            # Simular funding rate histórico (solo para futuros, pero aplicable a ambos)
+            # En la realidad esto vendría de la API, pero para backtesting simulamos
+            np.random.seed(42)  # Para reproducibilidad
+            funding_rates = np.random.normal(0.01, 0.15, len(df))  # Media 0.01%, std 0.15%
+            funding_rates = np.clip(funding_rates, -0.5, 0.5)  # Limitar entre -0.5% y 0.5%
+            
+            df['funding_rate'] = funding_rates / 100  # Convertir a decimal
+            
+            # Simular open interest (para análisis adicional)
+            base_oi = df['Volume'].rolling(window=30, min_periods=1).mean()
+            df['open_interest'] = base_oi * np.random.uniform(0.8, 1.2, len(df))
+            
+            # Marcar cada día como momento de funding (simplificación)
+            df['funding_time'] = True  # En timeframe 1d, cada día tiene funding
+            
+            # Agregar indicadores técnicos para optimización
+            df = self._add_technical_indicators_for_optimization(df)
+            
+            logger.info(f"📈 Datos de optimización agregados:")
+            logger.info(f"   💰 Funding rate promedio: {df['funding_rate'].mean()*100:.3f}%")
+            logger.info(f"   📊 Open interest promedio: {df['open_interest'].mean():,.0f}")
+            
+            return df
+            
+        except Exception as e:
+            logger.error(f"❌ Error agregando datos de optimización: {e}")
+            return df
+    
+    def _add_technical_indicators_for_optimization(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Agrega indicadores técnicos específicos para optimización.
+        
+        Args:
+            df: DataFrame con datos OHLCV
+            
+        Returns:
+            DataFrame con indicadores técnicos
+        """
+        try:
+            # Type assertions para linter
+            close_series = pd.Series(df['Close'])
+            high_series = pd.Series(df['High'])
+            low_series = pd.Series(df['Low'])
+            volume_series = pd.Series(df['Volume'])
+            
+            # RSI
+            df['RSI'] = self._calculate_rsi(close_series, period=14)
+            
+            # Bollinger Bands
+            bb_upper, bb_middle, bb_lower = self._calculate_bollinger_bands(close_series, period=20, std_dev=2)
+            df['BB_Upper'] = bb_upper
+            df['BB_Middle'] = bb_middle
+            df['BB_Lower'] = bb_lower
+            df['BB_Width'] = (bb_upper - bb_lower) / bb_middle  # Ancho de las bandas
+            
+            # ADX
+            df['ADX'] = self._calculate_adx(high_series, low_series, close_series, period=14)
+            
+            # Volatilidad
+            df['Volatility'] = close_series.pct_change().rolling(window=20).std()
+            
+            # Volumen promedio
+            df['Volume_MA'] = volume_series.rolling(window=20).mean()
+            df['Volume_Ratio'] = volume_series / df['Volume_MA']
+            
+            # Momentum
+            df['Momentum'] = close_series / close_series.shift(10) - 1
+            
+            return df
+            
+        except Exception as e:
+            logger.error(f"❌ Error calculando indicadores técnicos: {e}")
+            return df 

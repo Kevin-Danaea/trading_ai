@@ -19,7 +19,9 @@ import logging
 from backtesting import Backtest, Strategy
 
 # Importar estrategias modernas del dominio
-from app.domain.strategies import GridTradingStrategy, DCAStrategy, BTDStrategy
+# from app.domain.strategies import GridTradingStrategy, DCAStrategy, BTDStrategy
+from app.infrastructure.services.data_validator_service import DataValidatorService, DataValidationError
+from app.infrastructure.services.backtesting_result_validator_service import BacktestingResultValidatorService
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +32,9 @@ def safe_float(value: Any, default: float = 0.0) -> float:
         return default
     try:
         if isinstance(value, (int, float)):
+            # Manejar NaN e infinitos
+            if pd.isna(value) or np.isnan(value) or np.isinf(value):
+                return default
             return float(value)
         elif isinstance(value, str):
             return float(value)
@@ -68,7 +73,7 @@ def run_modern_backtest(df: pd.DataFrame,
                        strategy_class: Type[Strategy],
                        strategy_params: Dict[str, Any],
                        commission: float = 0.001,
-                       cash: float = 10000) -> Dict[str, Any]:
+                       cash: float = 1000000) -> Dict[str, Any]:
     """
     Ejecuta backtesting moderno usando la librería backtesting.py.
     
@@ -86,6 +91,13 @@ def run_modern_backtest(df: pd.DataFrame,
         Diccionario con resultados del backtesting
     """
     try:
+        # Validar datos antes de procesar
+        validator = DataValidatorService()
+        try:
+            df = validator.validar_dataframe(df, tipo='spot')
+        except DataValidationError as e:
+            logger.error(f"❌ Error de validación de datos: {e}")
+            raise
         logger.info(f"🚀 Ejecutando backtesting moderno con {strategy_class.__name__}")
         
         # Preparar datos - copiar DataFrame original
@@ -227,6 +239,62 @@ def run_modern_backtest(df: pd.DataFrame,
         
         results['performance_score'] = round(performance_score, 1)
         
+        # VALIDAR RESULTADOS DEL BACKTESTING
+        try:
+            # Crear validador de resultados
+            validator = BacktestingResultValidatorService(
+                strategy_name=strategy_class.__name__,
+                config={'limits': {
+                    'max_return_percent': 500.0,  # Más restrictivo para detección temprana
+                    'max_sharpe_ratio': 8.0,
+                    'max_win_rate': 95.0
+                }}
+            )
+            
+            # Preparar información de datos
+            data_info = {
+                'data_points': len(df_bt),
+                'start_date': df_bt.index[0] if len(df_bt) > 0 else None,
+                'end_date': df_bt.index[-1] if len(df_bt) > 0 else None,
+                'data_source': 'backtesting_data',
+                'data_gaps': 0  # Asumimos datos limpios
+            }
+            
+            # Validar resultados
+            validation_results = validator.validate_backtest_results(
+                results=results,
+                parameters=strategy_params,
+                data_info=data_info
+            )
+            
+            # Agregar resultados de validación al resultado final
+            results['validation'] = validation_results
+            
+            # Guardar reporte de validación
+            report_file = validator.save_validation_report(
+                validation_results, results, strategy_params, data_info
+            )
+            results['validation_report'] = report_file
+            
+            # Logging de validación
+            if validation_results['is_valid']:
+                logger.info(f"✅ Resultados validados correctamente (Score: {validation_results['overall_score']:.2f})")
+            else:
+                logger.warning(f"⚠️ Resultados con problemas de validación (Score: {validation_results['overall_score']:.2f})")
+                for issue in validation_results['critical_issues']:
+                    logger.error(f"🚨 CRÍTICO: {issue}")
+                for warning in validation_results['warnings'][:3]:  # Solo primeros 3 warnings
+                    logger.warning(f"⚠️ WARNING: {warning}")
+            
+        except Exception as validation_error:
+            logger.error(f"❌ Error en validación de resultados: {validation_error}")
+            results['validation'] = {
+                'is_valid': False,
+                'overall_score': 0.0,
+                'issues': [f"Error en validación: {str(validation_error)}"],
+                'critical_issues': [f"Error crítico en validación: {str(validation_error)}"]
+            }
+        
         logger.info(f"✅ Backtesting completado:")
         logger.info(f"   💰 Retorno: {total_return:.2f}%")
         logger.info(f"   📊 Trades: {results['# Trades']}")
@@ -274,6 +342,7 @@ class BacktestingService:
             Resultados del backtesting
         """
         try:
+            from app.domain.strategies.grid_trading import GridTradingStrategy
             # Preparar parámetros para GridTradingStrategy
             strategy_params = {
                 'levels': config.get('levels', 4),
@@ -310,6 +379,7 @@ class BacktestingService:
             Resultados del backtesting
         """
         try:
+            from app.domain.strategies.dca import DCAStrategy
             # Preparar parámetros para DCAStrategy
             strategy_params = {
                 'intervalo_compra': config.get('intervalo_compra', 3),
@@ -347,6 +417,7 @@ class BacktestingService:
             Resultados del backtesting
         """
         try:
+            from app.domain.strategies.btd import BTDStrategy
             # Preparar parámetros para BTDStrategy
             strategy_params = {
                 'intervalo_venta': config.get('intervalo_venta', 2),

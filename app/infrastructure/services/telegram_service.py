@@ -290,8 +290,14 @@ class TelegramService:
     def _escape_markdown_v2(self, text: str) -> str:
         """Escapa caracteres especiales para Markdown V2."""
         escape_chars = '_*[]()~`>#+-=|{}.!'
-        return ''.join('\\' + char if char in escape_chars else char for char in text)
-
+        escaped_text = ''
+        for char in text:
+            if char in escape_chars:
+                escaped_text += '\\' + char
+            else:
+                escaped_text += char
+        return escaped_text
+    
     def _format_parameters(self, params: Dict[str, Any]) -> str:
         """
         Formatea los parámetros optimizados para mostrar en Telegram.
@@ -365,7 +371,7 @@ class TelegramService:
 • ROI promedio: {sum(r.roi_porcentaje for r in recommendations)/total:.1f}%
 
 🎯 *DISTRIBUCIÓN POR ESTRATEGIA*
-{self._format_distribution(estrategias, {'grid': '📊', 'dca': '📈', 'btd': '💰'})}
+{self._format_distribution(estrategias, {'grid': '📊', 'dca': '📈', 'btd': '💰', 'FuturesGrid': '⚡'})}
 
 ⚡ *DISTRIBUCIÓN POR RIESGO*
 {self._format_distribution(riesgos, {'BAJO': '🟢', 'MEDIO': '🟡', 'ALTO': '🔴'})}
@@ -662,6 +668,9 @@ class TelegramService:
 🔸 *FUTUROS TRADING*
 {self._format_futures_summary(futures_recs)}
 
+🔸 *RESUMEN DETALLADO FUTUROS*
+{self._format_detailed_futures_summary(futures_recs)}
+
 ⚠️ *RECORDATORIO*
 Esta cartera está diseñada para ejecutarse durante toda la semana. Cada estrategia ha sido validada por análisis cuantitativo y cualitativo (Gemini AI).
 
@@ -771,6 +780,40 @@ Esta cartera está diseñada para ejecutarse durante toda la semana. Cada estrat
             lines.append(f"• {rec.simbolo} ({strategy_type}) - ROI: {rec.roi_porcentaje:.1f}%")
         
         return "\n".join(lines)
+    
+    def _format_detailed_futures_summary(self, futures_recs: List[RecomendacionDiaria]) -> str:
+        """Formatea resumen detallado de recomendaciones futuros con fortalezas y riesgos."""
+        if not futures_recs:
+            return "• No hay recomendaciones futuros para análisis detallado"
+        
+        detailed_lines = []
+        for rec in futures_recs:
+            strategy_type = rec.categoria.replace('_FUTURES', '')
+            
+            # Obtener información específica de futuros
+            optimal_leverage = getattr(rec, 'apalancamiento_optimo', 'x3')
+            futures_risk = getattr(rec, 'riesgo_futuros', 'medium')
+            direction = getattr(rec, 'direccion', 'long')
+            
+            risk_emoji = {
+                'low': '🟢',
+                'medium': '🟡',
+                'high': '🔴',
+                'extreme': '⚫'
+            }
+            
+            direction_emoji = '📈' if direction.lower() == 'long' else '📉'
+            
+            detailed_lines.append(f"""
+🚀 *{rec.simbolo} - {strategy_type.upper()} FUTUROS*
+• ROI: {rec.roi_porcentaje:.1f}% | Sharpe: {rec.sharpe_ratio:.2f}
+• Apalancamiento: {optimal_leverage} | Riesgo: {risk_emoji.get(futures_risk, '🟡')} {futures_risk.upper()}
+• Dirección: {direction_emoji} {direction.upper()}
+• Fortalezas: {rec.fortalezas_gemini}
+• Riesgos: {rec.riesgos_gemini}
+""")
+        
+        return "\n".join(detailed_lines)
     
     def close(self):
         """

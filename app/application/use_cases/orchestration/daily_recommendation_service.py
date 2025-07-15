@@ -70,32 +70,31 @@ class WeeklyRecommendationService:
         try:
             logger.info(f"🚀 Iniciando procesamiento semanal de {len(qualitative_results)} candidatos")
             
-            # 1. Seleccionar cartera semanal balanceada
+            # 1. Seleccionar cartera semanal balanceada (más flexible)
             weekly_selection = self.weekly_portfolio_service.select_weekly_portfolio(
                 qualitative_results=qualitative_results,
-                force_selection=False
+                force_selection=True  # Siempre forzar selección
             )
             
-            if not weekly_selection.get_all_recommendations():
-                logger.warning("⚠️ No se pudo seleccionar cartera semanal")
+            # NUEVA LÓGICA: Enviar todas las estrategias analizadas por Gemini
+            # No validar estrictamente, enviar lo que tengamos
+            recommendations = weekly_selection.get_all_recommendations()
+            
+            if not recommendations:
+                logger.warning("⚠️ No hay estrategias para enviar")
                 return {
-                    'status': 'error',
-                    'message': 'No se pudo seleccionar cartera semanal',
+                    'status': 'warning',
+                    'message': 'No hay estrategias analizadas para enviar',
                     'processed_count': 0,
                     'weekly_selection': weekly_selection
                 }
             
-            # 2. Validar selección
+            # 2. Validación opcional (solo para logging)
             validation_result = self.weekly_portfolio_service.validate_weekly_selection(weekly_selection)
-            
-            if not validation_result['is_valid']:
-                logger.error(f"❌ Selección semanal no válida: {validation_result['errors']}")
-                return {
-                    'status': 'error',
-                    'message': 'Selección semanal no válida',
-                    'processed_count': 0,
-                    'validation_result': validation_result
-                }
+            if validation_result['warnings']:
+                logger.info(f"📋 Advertencias de validación: {validation_result['warnings']}")
+            if validation_result['errors']:
+                logger.warning(f"⚠️ Errores de validación: {validation_result['errors']}")
             
             # 3. Obtener recomendaciones finales
             recommendations = weekly_selection.get_all_recommendations()
@@ -371,6 +370,9 @@ class WeeklyRecommendationService:
             # Generar reporte detallado
             detailed_report = self.report_service.generate_detailed_report(recommendations)
             
+            # NUEVO: Generar reporte de robustez
+            robustness_report = self._generate_robustness_report(weekly_selection)
+            
             logger.info("✅ Reportes semanales generados exitosamente")
             
             return {
@@ -378,6 +380,7 @@ class WeeklyRecommendationService:
                 'statistics': stats,
                 'executive_summary': executive_summary,
                 'detailed_report': detailed_report,
+                'robustness_report': robustness_report,  # NUEVO
                 'weekly_selection_summary': weekly_selection.get_completion_status(),
                 'generated_at': datetime.now().isoformat()
             }
@@ -490,7 +493,8 @@ class WeeklyRecommendationService:
                     'grid_futures': weekly_selection.grid_futures.simbolo if weekly_selection.grid_futures else None,
                     'dca_futures': weekly_selection.dca_futures.simbolo if weekly_selection.dca_futures else None,
                     'total_selected': weekly_selection.total_selected,
-                    'valid_until': weekly_selection.valid_until.isoformat() if weekly_selection.valid_until else None
+                    'valid_until': weekly_selection.valid_until.isoformat() if weekly_selection.valid_until else None,
+                    'robustness_metrics': weekly_selection.get_robustness_summary()  # NUEVO
                 },
                 'recommendations_summary': {
                     'total': total_recommendations,
@@ -551,9 +555,85 @@ class WeeklyRecommendationService:
                     'end_date': weekly_selection.valid_until.isoformat() if weekly_selection.valid_until else None
                 }
             }
+            
         except Exception as e:
             logger.error(f"❌ Error generando resumen ejecutivo semanal: {e}")
-            return {'error': str(e)}
+            return {
+                'selection_quality': 'unknown',
+                'error': str(e)
+            }
+    
+    def _generate_robustness_report(self, weekly_selection: WeeklyPortfolioSelection) -> Dict[str, Any]:
+        """
+        Genera reporte de robustez para la selección semanal.
+        
+        Args:
+            weekly_selection: Selección semanal
+            
+        Returns:
+            Reporte de robustez
+        """
+        try:
+            robustness_summary = weekly_selection.get_robustness_summary()
+            
+            return {
+                'overall_robustness': {
+                    'status': robustness_summary['validation_status'],
+                    'robust_strategies': robustness_summary['robust_strategies'],
+                    'total_strategies': robustness_summary['total_strategies'],
+                    'robustness_rate': robustness_summary['robustness_rate'],
+                    'average_cv_score': robustness_summary['average_cv_score']
+                },
+                'validation_details': {
+                    'method': weekly_selection.validation_results.get('validation_method', 'unknown'),
+                    'warnings': weekly_selection.validation_results.get('warnings', []),
+                    'errors': weekly_selection.validation_results.get('errors', [])
+                },
+                'quality_metrics': {
+                    'data_quality': weekly_selection.robustness_metrics.get('data_quality_score', 0.0),
+                    'consistency': weekly_selection.robustness_metrics.get('consistency_score', 0.0),
+                    'realism': weekly_selection.robustness_metrics.get('realism_score', 0.0)
+                },
+                'recommendations': self._generate_robustness_recommendations(robustness_summary),
+                'generated_at': datetime.now().isoformat()
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Error generando reporte de robustez: {e}")
+            return {
+                'overall_robustness': {'status': 'error', 'error': str(e)},
+                'generated_at': datetime.now().isoformat()
+            }
+    
+    def _generate_robustness_recommendations(self, robustness_summary: Dict[str, Any]) -> List[str]:
+        """
+        Genera recomendaciones basadas en las métricas de robustez.
+        
+        Args:
+            robustness_summary: Resumen de robustez
+            
+        Returns:
+            Lista de recomendaciones
+        """
+        recommendations = []
+        
+        robustness_rate = robustness_summary.get('robustness_rate', 0.0)
+        robust_strategies = robustness_summary.get('robust_strategies', 0)
+        total_strategies = robustness_summary.get('total_strategies', 0)
+        
+        if robustness_rate < 0.5:
+            recommendations.append("⚠️ Baja robustez: Considerar ajustar parámetros de validación")
+        
+        if robust_strategies < 3:
+            recommendations.append("📊 Pocas estrategias robustas: Revisar criterios de selección")
+        
+        if robustness_rate >= 0.8:
+            recommendations.append("✅ Excelente robustez: Las estrategias seleccionadas son muy confiables")
+        
+        if not recommendations:
+            recommendations.append("📈 Robustez aceptable: Las estrategias cumplen criterios mínimos")
+        
+        return recommendations
     
     def get_system_health(self) -> Dict[str, Any]:
         """

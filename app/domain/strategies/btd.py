@@ -66,6 +66,49 @@ class BTDStrategy(Strategy):
         logger.info(f"🔧 BTDStrategy inicializada: {self.intervalo_venta}d interval, "
                    f"{self.objetivo_ganancia*100:.0f}% target")
     
+    def get_parameters(self) -> dict:
+        """
+        Retorna los parámetros actuales de la estrategia.
+        
+        Returns:
+            dict: Diccionario con los parámetros de la estrategia.
+        """
+        return {
+            'intervalo_venta': self.intervalo_venta,
+            'monto_venta': self.monto_venta,
+            'objetivo_ganancia': self.objetivo_ganancia,
+            'rip_threshold': self.rip_threshold,
+            'tendencia_bajista_dias': self.tendencia_bajista_dias,
+            'stop_loss': self.stop_loss
+        }
+    
+    def validate_parameters(self, parameters: dict) -> bool:
+        """
+        Valida un conjunto de parámetros para la estrategia.
+        
+        Args:
+            parameters (dict): Parámetros a validar.
+            
+        Returns:
+            bool: True si los parámetros son válidos.
+        """
+        try:
+            # Validaciones básicas
+            if parameters.get('intervalo_venta', self.intervalo_venta) < 1:
+                raise ValueError("intervalo_venta debe ser >= 1")
+            if parameters.get('monto_venta', self.monto_venta) <= 0 or parameters.get('monto_venta', self.monto_venta) > 1:
+                raise ValueError("monto_venta debe estar entre 0 y 1")
+            if parameters.get('objetivo_ganancia', self.objetivo_ganancia) <= 0:
+                raise ValueError("objetivo_ganancia debe ser > 0")
+            if parameters.get('stop_loss', self.stop_loss) <= 0:
+                raise ValueError("stop_loss debe ser > 0")
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error validando parámetros BTD: {e}")
+            raise
+    
     def calculate_rsi(self, prices: pd.Series, period: int = 14) -> pd.Series:
         """Calcula RSI para detectar sobrecompra/sobreventa."""
         try:

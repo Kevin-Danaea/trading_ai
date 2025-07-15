@@ -114,10 +114,40 @@ class DatabaseService:
             
             # Crear tabla si no existe
             self.metadata.create_all(self.engine)
+            
+            # Verificar si la columna 'categoria' existe, si no, agregarla
+            self._ensure_categoria_column()
+            
             logger.info("✅ Tablas de base de datos verificadas/creadas")
             
         except Exception as e:
             logger.error(f"❌ Error creando tablas: {e}")
+    
+    def _ensure_categoria_column(self):
+        """Verifica y agrega la columna 'categoria' si no existe."""
+        try:
+            with self.get_connection() as conn:
+                # Verificar si la columna existe
+                result = conn.execute(text("""
+                    SELECT column_name 
+                    FROM information_schema.columns 
+                    WHERE table_name = 'recomendaciones_diarias' 
+                    AND column_name = 'categoria'
+                """))
+                
+                if not result.fetchone():
+                    # Agregar la columna si no existe
+                    conn.execute(text("""
+                        ALTER TABLE recomendaciones_diarias 
+                        ADD COLUMN categoria VARCHAR(30) NOT NULL DEFAULT 'BALANCED'
+                    """))
+                    conn.commit()
+                    logger.info("✅ Columna 'categoria' agregada a la tabla")
+                else:
+                    logger.info("✅ Columna 'categoria' ya existe")
+                    
+        except Exception as e:
+            logger.warning(f"⚠️ No se pudo verificar/agregar columna 'categoria': {e}")
     
     @contextmanager
     def get_connection(self):

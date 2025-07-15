@@ -87,8 +87,8 @@ class RecomendacionDiaria:
         if not (0 <= self.score_confianza_gemini <= 100):
             raise ValueError(f"score_confianza_gemini debe estar entre 0-100, recibido: {self.score_confianza_gemini}")
         
-        if self.estrategia_recomendada not in ['grid', 'dca', 'btd']:
-            raise ValueError(f"estrategia_recomendada debe ser 'grid', 'dca' o 'btd', recibido: {self.estrategia_recomendada}")
+        if self.estrategia_recomendada not in ['grid', 'dca', 'btd', 'FuturesGrid']:
+            raise ValueError(f"estrategia_recomendada debe ser 'grid', 'dca', 'btd' o 'FuturesGrid', recibido: {self.estrategia_recomendada}")
         
         if self.direccion not in ['long', 'short']:
             raise ValueError(f"direccion debe ser 'long' o 'short', recibido: {self.direccion}")

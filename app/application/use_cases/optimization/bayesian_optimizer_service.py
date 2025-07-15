@@ -319,7 +319,7 @@ class BayesianOptimizerService:
             # Ejecutar backtesting moderno
             config = {
                 **params,
-                'initial_capital': 10000.0,
+                'initial_capital': 1000000.0,  # Aumentar a $1M para permitir más trades
                 'commission': 0.001
             }
             results = self.backtesting_service.run_grid_simulation(df, config)
@@ -370,7 +370,7 @@ class BayesianOptimizerService:
             # Ejecutar backtesting DCA moderno
             config = {
                 **params,
-                'initial_capital': 10000.0,
+                'initial_capital': 1000000.0,  # Aumentar a $1M para permitir más trades
                 'commission': 0.001
             }
             results = self.backtesting_service.run_dca_simulation(df, config)
@@ -421,7 +421,7 @@ class BayesianOptimizerService:
             # Ejecutar backtesting BTD moderno
             config = {
                 **params,
-                'initial_capital': 10000.0,
+                'initial_capital': 1000000.0,  # Aumentar a $1M para permitir más trades
                 'commission': 0.001
             }
             results = self.backtesting_service.run_btd_simulation(df, config)

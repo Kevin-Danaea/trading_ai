@@ -107,6 +107,71 @@ class QualitativeFilterService:
         logger.info(f"🎯 Análisis cualitativo completado: {len(results)} oportunidades procesadas")
         return results
     
+    def analyze_futures_opportunities(self, opportunities: List[TradingOpportunity]) -> List[QualitativeResult]:
+        """
+        Analiza oportunidades específicamente para futuros usando el servicio especializado.
+        
+        Args:
+            opportunities: Lista de oportunidades de futuros
+            
+        Returns:
+            Lista de resultados cualitativos específicos para futuros
+        """
+        try:
+            logger.info(f"🧠 Iniciando análisis cualitativo de futuros para {len(opportunities)} oportunidades")
+            
+            # Importar el servicio especializado de futuros
+            from app.application.use_cases.qualitative_analysis.futures_analysis_service import FuturesAnalysisService
+            from app.infrastructure.providers.sentiment_data_provider import SentimentDataProvider
+            
+            # Inicializar el servicio de futuros
+            sentiment_provider = SentimentDataProvider()
+            futures_service = FuturesAnalysisService(sentiment_provider)
+            
+            results = []
+            
+            for i, opportunity in enumerate(opportunities, 1):
+                try:
+                    logger.info(f"🔍 Analizando oportunidad de futuros {i}/{len(opportunities)}: {opportunity.candidate.symbol}")
+                    
+                    # Usar el servicio especializado de futuros
+                    analysis = futures_service.analyze_futures_opportunity(opportunity.candidate)
+                    
+                    if analysis:
+                        # Calcular métricas usando métodos existentes
+                        confidence_score = self._calculate_confidence_score(opportunity, analysis)
+                        strategic_recommendation = self._generate_strategic_recommendation(opportunity, analysis)
+                        risk_assessment = self._assess_risk_level(opportunity, analysis)
+                        execution_priority = self._determine_execution_priority(opportunity, analysis, confidence_score)
+                        
+                        result = QualitativeResult(
+                            opportunity=opportunity,
+                            analysis=analysis,
+                            confidence_score=confidence_score,
+                            strategic_recommendation=strategic_recommendation,
+                            risk_assessment=risk_assessment,
+                            execution_priority=execution_priority
+                        )
+                        
+                        results.append(result)
+                        logger.info(f"✅ Análisis de futuros completado para {opportunity.candidate.symbol}")
+                    else:
+                        logger.warning(f"⚠️ No se pudo analizar oportunidad de futuros: {opportunity.candidate.symbol}")
+                        
+                except Exception as e:
+                    logger.error(f"❌ Error analizando oportunidad de futuros {opportunity.candidate.symbol}: {e}")
+                    continue
+            
+            # Ordenar por prioridad específica para futuros
+            results.sort(key=lambda x: x.execution_priority)
+            
+            logger.info(f"🎯 Análisis cualitativo de futuros completado: {len(results)} resultados")
+            return results
+            
+        except Exception as e:
+            logger.error(f"❌ Error analizando oportunidades de futuros: {e}")
+            return []
+    
     def _get_gemini_analysis(self, opportunity: TradingOpportunity) -> Optional[QualitativeAnalysis]:
         """
         Obtiene análisis cualitativo de Gemini para una oportunidad específica.
@@ -165,6 +230,8 @@ class QualitativeFilterService:
         except Exception as e:
             logger.error(f"❌ Error obteniendo análisis de Gemini: {e}")
             return None
+    
+
     
     def _normalize_gemini_response(self, analysis_data: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -386,24 +453,8 @@ class QualitativeFilterService:
         all_strategies = opportunity.get_all_strategies_comparison()
         strategy_ranking = opportunity.get_strategy_ranking()
         
-        # Determinar si es candidato para futuros
-        is_futures_suitable = (
-            hasattr(candidate, 'is_suitable_for_futures') and
-            candidate.is_suitable_for_futures()
-        )
-        
-        futures_analysis = ""
-        if is_futures_suitable:
-            futures_analysis = f"""
-### 🚀 ANÁLISIS PARA FUTUROS (APALANCAMIENTO)
-- **Volumen Futuros 24h**: ${getattr(candidate, 'futures_volume_24h', 0):,.0f}
-- **Funding Rate**: {getattr(candidate, 'funding_rate', 0)*100:.3f}%
-- **Open Interest**: ${getattr(candidate, 'open_interest', 0):,.0f}
-- **Apalancamiento Recomendado**: x{getattr(candidate, 'get_optimal_leverage_for_futures', lambda: 3)()}
-- **Nivel de Riesgo Futuros**: {getattr(candidate, 'get_futures_risk_level', lambda: 'medium')()}
-
-**IMPORTANTE**: Este activo es APTO para futuros. Analiza si es recomendable operar futuros ESTA SEMANA.
-"""
+        # Nota: El análisis de futuros se maneja en el servicio especializado FuturesAnalysisService
+        # Este prompt se enfoca solo en análisis cualitativo general para spot trading
         
         prompt = f"""
 # 🎯 ANÁLISIS ESTRATÉGICO DE OPORTUNIDAD DE TRADING
@@ -431,8 +482,6 @@ Eres un **Jefe de Estrategia** experto en trading de criptomonedas con 15 años 
 - **Cambio 24h**: {candidate.price_change_24h:.2f}%
 - **Sentimiento**: {candidate.sentiment_score:.2f}
 
-{futures_analysis}
-
 ---
 
 ## 🧠 TU MISIÓN: ANÁLISIS CUALITATIVO Y SELECCIÓN DE ESTRATEGIA
@@ -446,7 +495,7 @@ Aplica tu experiencia y sentido común para evaluar esta oportunidad. **IMPORTAN
 3. **Riesgo vs Recompensa**: ¿Los números tienen sentido estratégico?
 4. **Timing**: ¿Es buen momento para esta estrategia y criptomoneda?
 5. **Factores Cualitativos**: ¿Qué no capturan los números?
-6. **Análisis de Futuros**: {'Si es apto para futuros, ¿recomiendas operar futuros ESTA SEMANA?' if is_futures_suitable else 'No apto para futuros.'}
+6. **Análisis de Futuros**: No apto para futuros (se maneja en servicio especializado).
 
 ### Características de cada estrategia:
 - **GRID TRADING**: Ideal para mercados laterales con volatilidad controlada
@@ -503,6 +552,8 @@ Aplica tu experiencia y sentido común para evaluar esta oportunidad. **IMPORTAN
 """
         
         return prompt
+    
+
     
     def _format_strategy_params(self, params: Dict[str, Any]) -> str:
         """Formatea los parámetros de estrategia para el prompt."""

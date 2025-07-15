@@ -15,6 +15,13 @@ import numpy as np
 from backtesting import Strategy
 import logging
 
+# Importar validador de parámetros
+from app.infrastructure.services.parameter_validator_service import ParameterValidatorService, ParameterValidationError
+# Importar manejador de errores
+from app.infrastructure.services.error_handler_service import ErrorHandlerService, ErrorSeverity, ErrorType
+# Importar límites de seguridad
+from app.infrastructure.services.safety_limits_service import SafetyLimitsService, SafetyViolation
+
 logger = logging.getLogger(__name__)
 
 
@@ -43,11 +50,32 @@ class GridTradingStrategy(Strategy):
     def init(self):
         """Inicializa la estrategia y calcula indicadores necesarios."""
         
+        # Inicializar manejador de errores mejorado - NUNCA maneja errores silenciosamente
+        self.error_handler = ErrorHandlerService("GridTradingStrategy", {
+            'force_logging': True,
+            'log_all_errors': True,
+            'alert_critical_errors': True,
+            'max_errors_per_strategy': 5
+        })
+        
+        # Inicializar límites de seguridad
+        self.safety_limits = SafetyLimitsService("GridTradingStrategy", {'trading_type': 'spot'})
+        
+        # Validar parámetros antes de cualquier lógica
+        self._validar_parametros()
+        
         # Validar que tenemos las columnas necesarias
         required_columns = ['Open', 'High', 'Low', 'Close']
         for col in required_columns:
             if col not in self.data.df.columns:
-                raise ValueError(f"Columna faltante: {col}")
+                error_msg = f"Columna faltante: {col}"
+                self.error_handler.handle_error(
+                    ValueError(error_msg), 
+                    "Validación de columnas", 
+                    ErrorSeverity.CRITICAL, 
+                    ErrorType.DATA_ERROR
+                )
+                raise ValueError(error_msg)
         
         # Calcular indicadores técnicos si no están presentes
         self.setup_indicators()
@@ -64,6 +92,101 @@ class GridTradingStrategy(Strategy):
         self.position_size = max(0.15, 1.0 / self.levels)  # Mínimo 15% del capital
         
         logger.info(f"🔧 GridStrategy inicializada: {self.levels} niveles, ±{self.range_percent}%")
+    
+    def get_parameters(self) -> dict:
+        """
+        Retorna los parámetros actuales de la estrategia.
+        
+        Returns:
+            dict: Diccionario con los parámetros de la estrategia.
+        """
+        return {
+            'levels': self.levels,
+            'range_percent': self.range_percent,
+            'umbral_adx': self.umbral_adx,
+            'umbral_volatilidad': self.umbral_volatilidad,
+            'umbral_sentimiento': self.umbral_sentimiento
+        }
+    
+    def validate_parameters(self, parameters: dict) -> bool:
+        """
+        Valida un conjunto de parámetros para la estrategia.
+        
+        Args:
+            parameters (dict): Parámetros a validar.
+            
+        Returns:
+            bool: True si los parámetros son válidos.
+            
+        Raises:
+            ParameterValidationError: Si los parámetros son inválidos.
+        """
+        try:
+            validator = ParameterValidatorService()
+            
+            # Convertir parámetros al formato esperado por el validador
+            grid_params = {
+                'grid_levels': parameters.get('levels', self.levels),
+                'grid_spacing': parameters.get('range_percent', self.range_percent) / 100,
+                'take_profit': 0.12,
+                'stop_loss': 0.10,
+                'max_positions': parameters.get('levels', self.levels),
+                'rebalance_threshold': 0.1
+            }
+            
+            # Validar parámetros
+            validator.validar_parametros(grid_params, 'grid', 'spot')
+            return True
+            
+        except ParameterValidationError as e:
+            self.error_handler.handle_error(
+                e,
+                "Validación de parámetros externos",
+                ErrorSeverity.MEDIUM,
+                ErrorType.PARAMETER_ERROR
+            )
+            raise
+    
+    def _validar_parametros(self):
+        """Valida los parámetros de la estrategia usando ParameterValidatorService."""
+        try:
+            validator = ParameterValidatorService()
+            
+            # Convertir parámetros de clase a diccionario
+            params = {
+                'grid_levels': self.levels,
+                'grid_spacing': self.range_percent / 100,  # Convertir a decimal
+                'take_profit': 0.12,  # 12% - mayor que grid_spacing (8%)
+                'stop_loss': 0.10,    # 10% - mayor que grid_spacing (8%)
+                'max_positions': self.levels,
+                'rebalance_threshold': 0.1  # Valor por defecto
+            }
+            
+            # Validar parámetros para spot trading
+            params_validados = validator.validar_parametros(params, 'grid', 'spot')
+            
+            # Actualizar parámetros con valores validados
+            self.levels = int(params_validados['grid_levels'])
+            self.range_percent = params_validados['grid_spacing'] * 100  # Convertir de vuelta a porcentaje
+            
+            logger.info("✅ Parámetros de GridTradingStrategy validados correctamente")
+            
+        except ParameterValidationError as e:
+            self.error_handler.handle_error(
+                e, 
+                "Validación de parámetros", 
+                ErrorSeverity.CRITICAL, 
+                ErrorType.PARAMETER_ERROR
+            )
+            raise
+        except Exception as e:
+            self.error_handler.handle_error(
+                e, 
+                "Error inesperado en validación de parámetros", 
+                ErrorSeverity.CRITICAL, 
+                ErrorType.SYSTEM_ERROR
+            )
+            raise
     
     def setup_indicators(self):
         """Calcula indicadores técnicos necesarios."""
@@ -99,7 +222,12 @@ class GridTradingStrategy(Strategy):
             self.sentiment = self.sentiment.fillna(0.0)
         
         except Exception as e:
-            logger.warning(f"Error calculando indicadores: {e}")
+            self.error_handler.handle_error(
+                e, 
+                "Cálculo de indicadores", 
+                ErrorSeverity.HIGH, 
+                ErrorType.CALCULATION_ERROR
+            )
             # Valores por defecto en caso de error
             self.adx = pd.Series(25.0, index=self.data.df.index)
             self.volatility = pd.Series(0.03, index=self.data.df.index)
@@ -107,6 +235,17 @@ class GridTradingStrategy(Strategy):
     
     def calculate_adx(self, period: int = 14) -> pd.Series:
         """Calcula ADX simplificado usando operaciones numpy básicas."""
+        return self.error_handler.safe_execute(
+            self._calculate_adx_impl,
+            period,
+            context="Cálculo de ADX",
+            default_return=pd.Series(25.0, index=self.data.df.index),
+            severity=ErrorSeverity.MEDIUM,
+            error_type=ErrorType.CALCULATION_ERROR
+        )
+    
+    def _calculate_adx_impl(self, period: int = 14) -> pd.Series:
+        """Implementación del cálculo de ADX."""
         try:
             # Usar arrays numpy directamente
             high = np.array(self.data.High)
@@ -139,6 +278,17 @@ class GridTradingStrategy(Strategy):
     
     def calculate_volatility(self, period: int = 20) -> pd.Series:
         """Calcula volatilidad usando operaciones numpy básicas."""
+        return self.error_handler.safe_execute(
+            self._calculate_volatility_impl,
+            period,
+            context="Cálculo de volatilidad",
+            default_return=pd.Series(0.03, index=self.data.df.index),
+            severity=ErrorSeverity.MEDIUM,
+            error_type=ErrorType.CALCULATION_ERROR
+        )
+    
+    def _calculate_volatility_impl(self, period: int = 20) -> pd.Series:
+        """Implementación del cálculo de volatilidad."""
         try:
             close = np.array(self.data.Close)
             
@@ -241,36 +391,80 @@ class GridTradingStrategy(Strategy):
         except Exception as e:
             logger.error(f"Error en next(): {e}")
     
-    def execute_grid_logic(self, current_price: float):
-        """Ejecuta la lógica del grid trading."""
-        try:
-            # Verificar niveles de compra
-            for level in self.buy_levels:
-                if (current_price <= level and 
-                    not self.position and 
-                    level not in self.active_orders):
-                    
-                    # Comprar en nivel de soporte
-                    # Verificar que hay suficiente capital disponible
-                    if self.equity > 0 and self.position_size > 0:
-                        self.buy(size=self.position_size)
-                        self.active_orders[level] = 'buy'
-                        logger.debug(f"Compra en nivel {level:.4f}")
-                        break
-            
-            # Verificar niveles de venta
-            for level in self.sell_levels:
-                if (current_price >= level and 
-                    self.position and 
-                    level not in self.active_orders):
-                    
-                    # Vender en nivel de resistencia
-                    # Usar todo el tamaño de la posición disponible
-                    if self.position.size > 0:
-                        self.sell(size=self.position.size)
-                    self.active_orders[level] = 'sell'
-                    logger.debug(f"Venta en nivel {level:.4f}")
-                    break
+    def _check_safety_limits(self, operation_type: str, size: float, price: float):
+        """
+        Verifica límites de seguridad antes de una operación.
         
+        Args:
+            operation_type (str): 'buy' o 'sell'.
+            size (float): Tamaño de la operación.
+            price (float): Precio de la operación.
+        """
+        try:
+            current_capital = self.equity
+            current_equity = self.equity
+            
+            # Calcular exposición adicional
+            additional_exposure = size * price if operation_type == 'buy' else 0
+            
+            # Verificar todos los límites
+            self.safety_limits.check_all_limits(
+                new_position_size=size,
+                additional_exposure=additional_exposure,
+                current_capital=current_capital,
+                current_equity=current_equity
+            )
+            
+            logger.debug(f"✅ Límites de seguridad verificados para {operation_type}")
+            
+        except SafetyViolation as e:
+            self.error_handler.handle_error(
+                e,
+                f"Verificación de límites de seguridad para {operation_type}",
+                ErrorSeverity.HIGH,
+                ErrorType.TRADING_ERROR
+            )
+            raise
+    
+    def execute_grid_logic(self, current_price: float):
+        """Ejecuta la lógica del grid con verificación de límites de seguridad."""
+        try:
+            # Verificar límites de seguridad antes de operar
+            self._check_safety_limits('grid_operation', self.position_size, current_price)
+            
+            # Lógica original del grid
+            if not self.grid_initialized:
+                self.initialize_grid(current_price)
+            
+            # Verificar señales de compra
+            for buy_level in self.buy_levels:
+                if current_price <= buy_level and not self.position:
+                    # Verificar límites antes de comprar
+                    self._check_safety_limits('buy', self.position_size, current_price)
+                    self.buy(size=self.position_size)
+                    self.safety_limits.record_trade('buy', self.position_size, current_price)
+                    logger.debug(f"Grid compra en ${current_price:.4f}")
+                    break
+            
+            # Verificar señales de venta
+            if self.position:
+                for sell_level in self.sell_levels:
+                    if current_price >= sell_level:
+                        # Verificar límites antes de vender
+                        self._check_safety_limits('sell', self.position.size, current_price)
+                        self.sell(size=self.position.size)
+                        # Calcular PnL aproximado (puede no estar disponible en backtesting.py)
+                        pnl = 0.0  # Valor por defecto
+                        self.safety_limits.record_trade('sell', self.position.size, current_price, pnl)
+                        logger.debug(f"Grid vende en ${current_price:.4f}")
+                        break
+        
+        except SafetyViolation as e:
+            logger.warning(f"🚨 Operación cancelada por límites de seguridad: {e}")
         except Exception as e:
-            logger.error(f"Error ejecutando grid: {e}") 
+            self.error_handler.handle_error(
+                e,
+                "Lógica del grid",
+                ErrorSeverity.HIGH,
+                ErrorType.TRADING_ERROR
+            ) 
